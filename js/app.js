@@ -127,6 +127,7 @@ const TABS = [
   { id: "monthly", label: "월간요약", render: renderMonthly },
   { id: "newstore", label: "신규오픈", render: renderNewStore },
   { id: "tasks", label: "본부장업무", render: renderTasks },
+  { id: "leads", label: "가맹문의", render: renderFranchiseInquiries },
   { id: "settings", label: "설정", render: renderSettings },
 ];
 function buildTabs() {
@@ -642,6 +643,29 @@ function renderTasks(main) {
   });
 }
 
+// ---------- 09 가맹문의관리 ----------
+function renderFranchiseInquiries(main) {
+  return mountCrudTable(main, {
+    table: "franchise_inquiries",
+    title: "가맹문의관리",
+    orderCol: "inquiry_date",
+    addDefaults: { inquiry_date: new Date().toISOString().slice(0, 10), status: "신규문의" },
+    columns: [
+      { key: "inquiry_date", label: "문의일", type: "date" },
+      { key: "contact_name", label: "문의자명" },
+      { key: "phone", label: "연락처" },
+      { key: "interested_area", label: "관심지역" },
+      { key: "budget", label: "예산" },
+      { key: "channel", label: "문의경로", type: "select", category: "문의경로" },
+      { key: "status", label: "상담상태", type: "select", category: "상담상태" },
+      { key: "assignee", label: "담당자" },
+      { key: "next_action", label: "다음액션" },
+      { key: "next_action_date", label: "다음액션일", type: "date" },
+      { key: "notes", label: "비고" },
+    ],
+  });
+}
+
 // ---------- 설정 ----------
 async function renderSettings(main) {
   await loadAlertSettings();
@@ -700,7 +724,7 @@ async function renderSettings(main) {
 }
 async function renderDropdownEditor() {
   await loadDropdowns();
-  const cats = ["매장구분", "운영상태", "입금상태", "처리상태", "우선순위", "보고구분", "오픈단계", "확인여부"];
+  const cats = ["매장구분", "운영상태", "입금상태", "처리상태", "우선순위", "보고구분", "오픈단계", "확인여부", "문의경로", "상담상태"];
   const box = $("#ddEditor");
   box.innerHTML = cats.map(cat => `
     <div class="cat" data-cat="${escapeHtml(cat)}">

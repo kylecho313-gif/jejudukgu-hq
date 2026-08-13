@@ -122,6 +122,27 @@ create table if not exists manager_tasks (
   created_at timestamptz default now()
 );
 
+-- 09_가맹문의관리 (영업/신규가맹점 모집 리드)
+create table if not exists franchise_inquiries (
+  id uuid primary key default gen_random_uuid(),
+  inquiry_date date default current_date,
+  contact_name text,
+  phone text,
+  interested_area text,
+  budget text,
+  channel text,             -- 전화/블로그/인스타/지인소개/기타
+  status text default '신규문의', -- 신규문의/상담중/현장방문예정/현장방문완료/계약검토/계약완료/보류/거절
+  assignee text,
+  next_action text,
+  next_action_date date,
+  notes text,
+  updated_by text,
+  updated_at timestamptz default now(),
+  created_at timestamptz default now()
+);
+alter table franchise_inquiries enable row level security;
+create policy "anon full access" on franchise_inquiries for all using (true) with check (true);
+
 -- 08_알림설정 (항상 단일 행, id=1)
 create table if not exists alert_settings (
   id int primary key default 1,
@@ -150,7 +171,9 @@ insert into dropdown_options (category, value, sort_order) values
  ('처리상태','미처리',1), ('처리상태','진행중',2), ('처리상태','완료',3), ('처리상태','보류',4),
  ('우선순위','상',1), ('우선순위','중',2), ('우선순위','하',3),
  ('오픈단계','계약',1), ('오픈단계','설계',2), ('오픈단계','공사',3), ('오픈단계','교육',4), ('오픈단계','가오픈',5), ('오픈단계','오픈완료',6),
- ('확인여부','확인',1), ('확인여부','미확인',2)
+ ('확인여부','확인',1), ('확인여부','미확인',2),
+ ('문의경로','전화',1), ('문의경로','블로그',2), ('문의경로','인스타',3), ('문의경로','지인소개',4), ('문의경로','기타',5),
+ ('상담상태','신규문의',1), ('상담상태','상담중',2), ('상담상태','현장방문예정',3), ('상담상태','현장방문완료',4), ('상담상태','계약검토',5), ('상담상태','계약완료',6), ('상담상태','보류',7), ('상담상태','거절',8)
 on conflict do nothing;
 
 -- 초기 매장 데이터 (기존 엑셀 01_매장현황 기준)
