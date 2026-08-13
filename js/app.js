@@ -307,7 +307,8 @@ async function mountCrudTable(main, cfg) {
         <div class="right"><button class="primary" id="addRowBtn">+ 행 추가</button></div>
       </div>
       <div class="tableWrap">
-      <table>
+      <table${cfg.fixedLayout ? ' style="table-layout:fixed"' : ""}>
+        <colgroup>${cfg.columns.map(c => `<col${c.width ? ` style="width:${c.width}"` : ""}>`).join("")}<col style="width:100px"></colgroup>
         <thead><tr>${cfg.columns.map(c => `<th>${escapeHtml(c.label)}</th>`).join("")}<th>작업</th></tr></thead>
         <tbody id="crudBody">
           ${rows.map(r => rowHtml(cfg, r)).join("")}
@@ -376,21 +377,22 @@ function renderStores(main) {
     title: "매장현황",
     orderCol: "store_code",
     orderAsc: true,
+    fixedLayout: true,
     addDefaults: { name: "신규매장", type: "가맹", status: "준비중", royalty_rate: 3.0 },
     columns: [
-      { key: "store_code", label: "매장코드" },
-      { key: "name", label: "매장명" },
-      { key: "type", label: "구분", type: "select", category: "매장구분" },
-      { key: "status", label: "운영상태", type: "select", category: "운영상태" },
-      { key: "owner_name", label: "점주/책임자" },
-      { key: "phone", label: "연락처" },
-      { key: "address", label: "주소" },
-      { key: "open_date", label: "오픈일", type: "date" },
-      { key: "contract_start", label: "계약시작일", type: "date" },
-      { key: "contract_end", label: "계약만료일", type: "date" },
-      { key: "royalty_rate", label: "로열티율(%)", type: "number" },
-      { key: "hq_manager", label: "본부담당자" },
-      { key: "notes", label: "비고" },
+      { key: "store_code", label: "매장코드", width: "64px" },
+      { key: "name", label: "매장명", width: "84px" },
+      { key: "type", label: "구분", type: "select", category: "매장구분", width: "56px" },
+      { key: "status", label: "운영상태", type: "select", category: "운영상태", width: "64px" },
+      { key: "owner_name", label: "점주/책임자", width: "72px" },
+      { key: "phone", label: "연락처", width: "96px" },
+      { key: "address", label: "주소", width: "280px" },
+      { key: "open_date", label: "오픈일", type: "date", width: "112px" },
+      { key: "contract_start", label: "계약시작일", type: "date", width: "112px" },
+      { key: "contract_end", label: "계약만료일", type: "date", width: "112px" },
+      { key: "royalty_rate", label: "로열티율(%)", type: "number", width: "64px" },
+      { key: "hq_manager", label: "본부담당자", width: "72px" },
+      { key: "notes", label: "비고", width: "100px" },
     ],
     onSaved: () => loadStores(),
   });
