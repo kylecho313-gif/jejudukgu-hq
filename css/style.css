@@ -1,0 +1,155 @@
+:root{
+  --bg:#faf7f2;
+  --panel:#ffffff;
+  --ink:#2a2420;
+  --muted:#7a7168;
+  --line:#e7e0d6;
+  --accent:#d9711f;
+  --accent-dark:#b85a15;
+  --ok:#2f7d4f;
+  --warn:#c99a1f;
+  --danger:#c0392b;
+  --radius:10px;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Malgun Gothic",sans-serif;
+  background:var(--bg);
+  color:var(--ink);
+  font-size:14px;
+}
+#loginScreen{
+  min-height:100vh;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.loginBox{
+  background:var(--panel);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:32px;
+  width:320px;
+  box-shadow:0 4px 20px rgba(0,0,0,.06);
+}
+.loginBox h1{font-size:18px;margin:0 0 4px}
+.loginBox p{color:var(--muted);font-size:12px;margin:0 0 20px}
+.loginBox input{
+  width:100%;padding:10px 12px;margin-bottom:10px;
+  border:1px solid var(--line);border-radius:8px;font-size:14px;
+}
+.loginBox button{
+  width:100%;padding:10px;border:none;border-radius:8px;
+  background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;
+}
+.loginBox button:hover{background:var(--accent-dark)}
+.loginErr{color:var(--danger);font-size:12px;min-height:16px;margin-top:6px}
+
+#app{display:none;min-height:100vh}
+header.topbar{
+  background:var(--panel);border-bottom:1px solid var(--line);
+  padding:10px 16px;display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;z-index:10;
+}
+header.topbar .brand{font-weight:700;font-size:15px}
+header.topbar .brand span{color:var(--accent)}
+header.topbar .userInfo{font-size:12px;color:var(--muted);display:flex;gap:10px;align-items:center}
+header.topbar button.logout{
+  background:none;border:1px solid var(--line);border-radius:6px;padding:5px 10px;
+  cursor:pointer;font-size:12px;color:var(--muted);
+}
+
+nav.tabs{
+  display:flex;gap:4px;overflow-x:auto;background:var(--panel);
+  border-bottom:1px solid var(--line);padding:0 12px;
+}
+nav.tabs button{
+  border:none;background:none;padding:10px 12px;font-size:13px;cursor:pointer;
+  color:var(--muted);white-space:nowrap;border-bottom:2px solid transparent;
+}
+nav.tabs button.active{color:var(--accent-dark);border-bottom-color:var(--accent);font-weight:600}
+
+main{padding:16px;max-width:1400px;margin:0 auto}
+.panel{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px;margin-bottom:16px;
+}
+.panel h2{margin:0 0 12px;font-size:15px}
+.panel h2 small{color:var(--muted);font-weight:400;font-size:12px}
+
+.kpiGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:12px}
+.kpi .label{font-size:11px;color:var(--muted)}
+.kpi .value{font-size:20px;font-weight:700;margin-top:4px}
+.kpi.warn{border-color:var(--warn);background:#fdf7e6}
+.kpi.danger{border-color:var(--danger);background:#fbeae8}
+
+.alertBox{border-left:3px solid var(--danger);background:#fbeae8;padding:8px 12px;border-radius:6px;margin-bottom:6px;font-size:13px}
+.alertBox.warn{border-left-color:var(--warn);background:#fdf7e6}
+.alertBox.ok{border-left-color:var(--ok);background:#eef7f0;color:var(--muted)}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+table th{
+  text-align:left;background:#f5f0e8;padding:8px;border:1px solid var(--line);
+  white-space:nowrap;font-weight:600;position:sticky;top:0;
+}
+table td{padding:4px;border:1px solid var(--line);vertical-align:middle}
+table td input, table td select, table td textarea{
+  width:100%;border:1px solid transparent;background:transparent;padding:6px;font-size:13px;
+  font-family:inherit;border-radius:4px;
+}
+table td input:hover, table td select:hover, table td textarea:hover,
+table td input:focus, table td select:focus, table td textarea:focus{
+  border-color:var(--line);background:#fffdf9;
+}
+table td.readonly input{color:var(--muted);background:#f9f6f1}
+table tr.dirty td{background:#fff7ea}
+.tableWrap{overflow-x:auto}
+
+.rowActions{white-space:nowrap}
+button.iconBtn{
+  border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 8px;
+  cursor:pointer;font-size:12px;margin-right:4px;
+}
+button.iconBtn.save{border-color:var(--accent);color:var(--accent-dark);font-weight:600}
+button.iconBtn.del{color:var(--danger);border-color:#f0d3ce}
+.toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+.toolbar .right{display:flex;gap:8px;align-items:center}
+button.primary{
+  background:var(--accent);color:#fff;border:none;border-radius:6px;padding:8px 14px;
+  font-size:13px;cursor:pointer;font-weight:600;
+}
+button.primary:hover{background:var(--accent-dark)}
+select.monthPicker,input.monthPicker{padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px}
+
+.badge{padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge.ok{background:#eef7f0;color:var(--ok)}
+.badge.warn{background:#fdf7e6;color:var(--warn)}
+.badge.danger{background:#fbeae8;color:var(--danger)}
+.badge.muted{background:#f0ede8;color:var(--muted)}
+
+.toast{
+  position:fixed;bottom:20px;right:20px;background:var(--ink);color:#fff;
+  padding:10px 16px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:100;
+}
+.toast.show{opacity:1}
+
+.settingsGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.settingsGrid label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.settingsGrid input{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px}
+
+.dropdownEditor{display:flex;flex-wrap:wrap;gap:16px}
+.dropdownEditor .cat{border:1px solid var(--line);border-radius:8px;padding:10px;min-width:180px}
+.dropdownEditor .cat h4{margin:0 0 8px;font-size:12px;color:var(--muted)}
+.dropdownEditor .cat .item{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:13px;border-bottom:1px dashed var(--line)}
+.dropdownEditor .cat .item button{border:none;background:none;color:var(--danger);cursor:pointer;font-size:12px}
+.dropdownEditor .cat .addRow{display:flex;gap:4px;margin-top:8px}
+.dropdownEditor .cat .addRow input{flex:1;padding:4px 6px;border:1px solid var(--line);border-radius:4px;font-size:12px}
+
+footer.foot{text-align:center;color:var(--muted);font-size:11px;padding:16px}
+
+@media(max-width:640px){
+  main{padding:8px}
+  .panel{padding:10px}
+}
