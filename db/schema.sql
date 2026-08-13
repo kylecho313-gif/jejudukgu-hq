@@ -32,7 +32,6 @@ create table if not exists sales_royalty (
   sales numeric default 0,
   payment_amount numeric default 0,
   payment_status text default '미입금',  -- 입금완료 / 일부입금 / 미입금 / 해당없음
-  payment_due_date date,
   confirmer text,
   notes text,
   updated_by text,

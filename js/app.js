@@ -424,11 +424,17 @@ async function renderSales(main) {
         <div class="right">월 ${monthOptions}</div>
       </div>
       <div class="tableWrap">
-      <table>
+      <table style="table-layout:fixed">
+        <colgroup>
+          <col style="width:140px"><col style="width:56px"><col style="width:56px"><col style="width:96px">
+          <col style="width:96px"><col style="width:72px"><col style="width:56px"><col style="width:96px">
+          <col style="width:96px"><col style="width:96px"><col style="width:88px">
+          <col style="width:80px"><col style="width:140px"><col style="width:100px">
+        </colgroup>
         <thead><tr>
           <th>매장명</th><th>구분</th><th>상태</th><th>전월매출</th><th>월매출</th><th>전월대비</th>
           <th>로열티율</th><th>로열티발생액</th><th>입금액</th><th>미수금</th><th>입금상태</th>
-          <th>입금예정일</th><th>확인자</th><th>특이사항/점주요청</th><th>작업</th>
+          <th>확인자</th><th>특이사항/점주요청</th><th>작업</th>
         </tr></thead>
         <tbody id="salesBody">
           ${state.stores.map(s => salesRowHtml(s, byStore[s.id], prevByStore[s.id])).join("")}
@@ -485,7 +491,6 @@ function salesRowHtml(store, r, prev) {
     <td><input type="number" data-key="payment_amount" value="${r.payment_amount ?? ""}"></td>
     <td class="readonly"><input value="${fmtNum(unpaid)}" disabled></td>
     <td>${selectHtml("payment_status", dd("입금상태"), r.payment_status)}</td>
-    <td><input type="date" data-key="payment_due_date" value="${r.payment_due_date || ""}"></td>
     <td><input type="text" data-key="confirmer" value="${escapeHtml(r.confirmer)}"></td>
     <td><input type="text" data-key="notes" value="${escapeHtml(r.notes)}"></td>
     <td class="rowActions"><button class="iconBtn save">저장</button></td>
