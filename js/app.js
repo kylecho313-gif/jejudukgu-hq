@@ -441,6 +441,16 @@ async function renderSales(main) {
     $all("[data-key]", tr).forEach(el => { payload[el.dataset.key] = el.value === "" ? null : el.value; });
     const { error } = await sb.from("sales_royalty").upsert(payload, { onConflict: "month,store_id" });
     if (error) { alert("저장 실패: " + error.message); return; }
+
+    const rateEl = $("[data-store-key='royalty_rate']", tr);
+    const newRate = rateEl ? Number(rateEl.value) || 0 : null;
+    const store = state.stores.find(s => s.id === storeId);
+    if (rateEl && store && newRate !== Number(store.royalty_rate)) {
+      const { error: rateErr } = await sb.from("stores").update({ royalty_rate: newRate, updated_by: state.userName }).eq("id", storeId);
+      if (rateErr) { alert("로열티율 저장 실패: " + rateErr.message); return; }
+      store.royalty_rate = newRate;
+    }
+
     tr.classList.remove("dirty");
     toast("저장되었습니다");
   });
@@ -460,7 +470,7 @@ function salesRowHtml(store, r, prev) {
     <td class="readonly"><input value="${fmtNum(prevSales)}" disabled></td>
     <td><input type="number" data-key="sales" value="${r.sales ?? ""}"></td>
     <td class="readonly"><input value="${diff === null ? '-' : diff + '%'}" disabled></td>
-    <td class="readonly"><input value="${rate}%" disabled></td>
+    <td><input type="number" step="0.1" data-store-key="royalty_rate" value="${rate}"></td>
     <td class="readonly"><input value="${fmtNum(royalty)}" disabled></td>
     <td><input type="number" data-key="payment_amount" value="${r.payment_amount ?? ""}"></td>
     <td class="readonly"><input value="${fmtNum(unpaid)}" disabled></td>
