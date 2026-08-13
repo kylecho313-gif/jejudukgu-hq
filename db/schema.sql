@@ -109,16 +109,15 @@ create table if not exists new_store_openings (
 -- 07_본부장업무관리
 create table if not exists manager_tasks (
   id uuid primary key default gen_random_uuid(),
-  reg_date date default current_date,
+  start_at timestamptz default now(),
   task_type text,
   task_content text,
   target_store text,
   priority text,
   assignee text,
-  deadline date,
+  due_at timestamptz,
   status text default '미처리',
-  ceo_check text,
-  notes text,
+  ceo_check text default '미확인',
   updated_by text,
   updated_at timestamptz default now(),
   created_at timestamptz default now()
@@ -151,7 +150,8 @@ insert into dropdown_options (category, value, sort_order) values
  ('입금상태','입금완료',1), ('입금상태','일부입금',2), ('입금상태','미입금',3), ('입금상태','해당없음',4),
  ('처리상태','미처리',1), ('처리상태','진행중',2), ('처리상태','완료',3), ('처리상태','보류',4),
  ('우선순위','상',1), ('우선순위','중',2), ('우선순위','하',3),
- ('오픈단계','계약',1), ('오픈단계','설계',2), ('오픈단계','공사',3), ('오픈단계','교육',4), ('오픈단계','가오픈',5), ('오픈단계','오픈완료',6)
+ ('오픈단계','계약',1), ('오픈단계','설계',2), ('오픈단계','공사',3), ('오픈단계','교육',4), ('오픈단계','가오픈',5), ('오픈단계','오픈완료',6),
+ ('확인여부','확인',1), ('확인여부','미확인',2)
 on conflict do nothing;
 
 -- 초기 매장 데이터 (기존 엑셀 01_매장현황 기준)

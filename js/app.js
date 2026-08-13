@@ -15,6 +15,13 @@ function $(sel, root = document) { return root.querySelector(sel); }
 function $all(sel, root = document) { return [...root.querySelectorAll(sel)]; }
 function escapeHtml(s) { return (s ?? "").toString().replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function monthNow() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`; }
+function toDatetimeLocal(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (isNaN(d)) return "";
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 function fmtNum(n) { return (Number(n) || 0).toLocaleString("ko-KR"); }
 function todayMidnight() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
 function daysUntil(dateStr) {
@@ -169,8 +176,8 @@ async function computeAlerts() {
 
   const { data: tasks } = await sb.from("manager_tasks").select("*").neq("status", "완료");
   for (const tk of tasks || []) {
-    if (!tk.deadline) continue;
-    const d = daysUntil(tk.deadline);
+    if (!tk.due_at) continue;
+    const d = daysUntil(tk.due_at);
     if (d < 0) alerts.task.push({ level: "danger", text: `${tk.task_content || "업무"} 마감 지남 (D+${-d})` });
     else if (d <= (s.manager_task_due_days ?? 3)) alerts.task.push({ level: "warn", text: `${tk.task_content || "업무"} 마감 임박 (D-${d})` });
   }
@@ -360,6 +367,7 @@ function rowHtml(cfg, r) {
     if (c.type === "select") inner = selectHtml(c.key, dd(c.category), r[c.key]);
     else if (c.type === "store") inner = storeSelectHtml(r[c.key]);
     else if (c.type === "date") inner = `<input type="date" data-key="${c.key}" value="${r[c.key] || ""}">`;
+    else if (c.type === "datetime") inner = `<input type="datetime-local" data-key="${c.key}" value="${toDatetimeLocal(r[c.key])}">`;
     else if (c.type === "number") inner = `<input type="number" data-key="${c.key}" value="${r[c.key] ?? ""}">`;
     else if (c.type === "textarea") inner = `<textarea rows="2" data-key="${c.key}">${escapeHtml(r[c.key])}</textarea>`;
     else inner = `<input type="text" data-key="${c.key}" value="${escapeHtml(r[c.key])}">`;
@@ -613,19 +621,18 @@ function renderTasks(main) {
   return mountCrudTable(main, {
     table: "manager_tasks",
     title: "본부장 업무관리",
-    orderCol: "reg_date",
-    addDefaults: { reg_date: new Date().toISOString().slice(0, 10), status: "미처리", priority: "중" },
+    orderCol: "start_at",
+    addDefaults: { start_at: toDatetimeLocal(new Date()), status: "미처리", priority: "중", ceo_check: "미확인" },
     columns: [
-      { key: "reg_date", label: "등록일", type: "date" },
+      { key: "start_at", label: "시작일", type: "datetime" },
       { key: "task_type", label: "업무구분" },
       { key: "task_content", label: "업무내용" },
       { key: "target_store", label: "대상매장" },
       { key: "priority", label: "우선순위", type: "select", category: "우선순위" },
       { key: "assignee", label: "담당자" },
-      { key: "deadline", label: "마감일", type: "date" },
+      { key: "due_at", label: "마감일", type: "datetime" },
       { key: "status", label: "진행상태", type: "select", category: "처리상태" },
-      { key: "ceo_check", label: "대표확인" },
-      { key: "notes", label: "비고" },
+      { key: "ceo_check", label: "대표확인", type: "select", category: "확인여부" },
     ],
   });
 }
@@ -688,7 +695,7 @@ async function renderSettings(main) {
 }
 async function renderDropdownEditor() {
   await loadDropdowns();
-  const cats = ["매장구분", "운영상태", "입금상태", "처리상태", "우선순위", "보고구분", "오픈단계"];
+  const cats = ["매장구분", "운영상태", "입금상태", "처리상태", "우선순위", "보고구분", "오픈단계", "확인여부"];
   const box = $("#ddEditor");
   box.innerHTML = cats.map(cat => `
     <div class="cat" data-cat="${escapeHtml(cat)}">
