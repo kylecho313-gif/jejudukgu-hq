@@ -128,6 +128,7 @@ const TABS = [
   { id: "newstore", label: "신규오픈", render: renderNewStore },
   { id: "tasks", label: "본부장업무", render: renderTasks },
   { id: "leads", label: "가맹문의", render: renderFranchiseInquiries },
+  { id: "logistics", label: "물류마진", render: renderLogistics },
   { id: "settings", label: "설정", render: renderSettings },
 ];
 function buildTabs() {
@@ -149,7 +150,7 @@ async function goTab(id) {
 // ---------- 알림 계산 ----------
 async function computeAlerts() {
   const s = state.alertSettings;
-  const alerts = { contract: [], issue: [], newStore: [], task: [], unpaid: [] };
+  const alerts = { contract: [], issue: [], newStore: [], task: [], unpaid: [], lead: [] };
 
   for (const st of state.stores) {
     if (!st.contract_end) continue;
@@ -191,6 +192,15 @@ async function computeAlerts() {
     if (unpaid > (s.unpaid_threshold ?? 0)) alerts.unpaid.push({ level: "danger", text: `${store?.name || "-"} 미수금 ${fmtNum(unpaid)}원` });
   }
 
+  const { data: leads } = await sb.from("franchise_inquiries").select("*").not("status", "in", "(계약완료,보류,거절)");
+  for (const ld of leads || []) {
+    if (!ld.next_action_date) continue;
+    const d = daysUntil(ld.next_action_date);
+    const nm = ld.contact_name || "가맹문의";
+    if (d < 0) alerts.lead.push({ level: "danger", text: `[가맹문의] ${nm} 후속조치 기한 지남 (D+${-d})` });
+    else if (d <= (s.lead_followup_due_days ?? 3)) alerts.lead.push({ level: "warn", text: `[가맹문의] ${nm} 후속조치 임박 (D-${d})` });
+  }
+
   return alerts;
 }
 
@@ -200,6 +210,8 @@ async function renderDashboard(main) {
   const alerts = await computeAlerts();
   const { data: salesRows } = await sb.from("sales_royalty").select("*").eq("month", state.currentMonth);
   const { data: issuesAll } = await sb.from("issues").select("*");
+  const { data: marginRows } = await sb.from("supply_margin").select("*").eq("month", state.currentMonth);
+  const { data: leadsThisMonth } = await sb.from("franchise_inquiries").select("id").gte("inquiry_date", `${state.currentMonth}-01`).lt("inquiry_date", `${shiftMonth(state.currentMonth, 1)}-01`);
 
   const salesByStore = {};
   for (const r of salesRows || []) salesByStore[r.store_id] = r;
@@ -220,6 +232,9 @@ async function renderDashboard(main) {
     const royalty = (Number(r.sales) || 0) * (Number(st?.royalty_rate) || 0) / 100;
     return a + Math.max(royalty - (Number(r.payment_amount) || 0), 0);
   }, 0);
+
+  const totalMargin = (marginRows || []).reduce((a, r) => a + ((Number(r.supply_amount) || 0) - (Number(r.cost_amount) || 0)), 0);
+  const totalHqRevenue = totalRoyalty + totalMargin;
 
   const unresolvedIssues = (issuesAll || []).filter(i => i.status !== "완료");
   const openIssueCount = (issuesAll || []).filter(i => i.status === "미처리").length;
@@ -246,9 +261,12 @@ async function renderDashboard(main) {
         ${kpi("조회월 총매출", fmtNum(totalSales) + "원")}
         ${kpi("로열티 발생액", fmtNum(totalRoyalty) + "원")}
         ${kpi("로열티 미수금", fmtNum(totalUnpaid) + "원", totalUnpaid > 0 ? "danger" : "")}
+        ${kpi("조회월 물류마진", fmtNum(totalMargin) + "원")}
+        ${kpi("본사 총수익(로열티+물류마진)", fmtNum(totalHqRevenue) + "원")}
         ${kpi("미처리 이슈", openIssueCount)}
         ${kpi("진행중 이슈", progressIssueCount)}
         ${kpi("완료 이슈", doneIssueCount)}
+        ${kpi("이번달 신규 가맹문의", (leadsThisMonth || []).length)}
       </div>
     </div>
 
@@ -289,7 +307,7 @@ function kpi(label, value, level = "") {
   return `<div class="kpi ${level}"><div class="label">${escapeHtml(label)}</div><div class="value">${value}</div></div>`;
 }
 function renderAlertList(alerts) {
-  const all = [...alerts.contract, ...alerts.issue, ...alerts.newStore, ...alerts.task, ...alerts.unpaid];
+  const all = [...alerts.contract, ...alerts.issue, ...alerts.newStore, ...alerts.task, ...alerts.unpaid, ...alerts.lead];
   if (all.length === 0) return `<div class="alertBox ok">현재 기준을 초과한 경고가 없습니다.</div>`;
   return all.map(a => `<div class="alertBox ${a.level}">${escapeHtml(a.text)}</div>`).join("");
 }
@@ -314,6 +332,7 @@ async function mountCrudTable(main, cfg) {
         <h2 style="margin:0">${cfg.title}</h2>
         <div class="right"><button class="primary" id="addRowBtn">+ 행 추가</button></div>
       </div>
+      ${cfg.summaryHtml || ""}
       <div class="tableWrap">
       <table${cfg.fixedLayout ? ' style="table-layout:fixed"' : ""}>
         <colgroup>${cfg.columns.map(c => `<col${c.width ? ` style="width:${c.width}"` : ""}>`).join("")}<col style="width:100px"></colgroup>
@@ -497,6 +516,88 @@ function salesRowHtml(store, r, prev) {
     <td class="rowActions"><button class="iconBtn save">저장</button></td>
   </tr>`;
 }
+// ---------- 10 물류/식자재 마진관리 ----------
+async function renderLogistics(main) {
+  await loadStores();
+  const monthOptions = monthPickerHtml(state.currentMonth);
+  const { data: rows, error } = await sb.from("supply_margin").select("*").eq("month", state.currentMonth);
+  if (error) {
+    main.innerHTML = `<div class="panel">불러오기 실패: ${escapeHtml(error.message)}
+      <p style="color:var(--muted);font-size:12px">supply_margin 테이블이 없다면 db/migration_02_logistics_and_leads.sql을 Supabase SQL Editor에서 먼저 실행해주세요.</p></div>`;
+    return;
+  }
+  const byStore = {}; for (const r of rows || []) byStore[r.store_id] = r;
+
+  const totalSupply = (rows || []).reduce((a, r) => a + (Number(r.supply_amount) || 0), 0);
+  const totalCost = (rows || []).reduce((a, r) => a + (Number(r.cost_amount) || 0), 0);
+  const totalMargin = totalSupply - totalCost;
+  const marginRate = totalSupply ? Math.round((totalMargin / totalSupply) * 1000) / 10 : 0;
+
+  main.innerHTML = `
+    <div class="panel">
+      <div class="toolbar">
+        <h2 style="margin:0">물류/식자재 마진관리</h2>
+        <div class="right">월 ${monthOptions}</div>
+      </div>
+      <div class="kpiGrid" style="margin-bottom:12px">
+        ${kpi("조회월 공급액 합계", fmtNum(totalSupply) + "원")}
+        ${kpi("조회월 매입원가 합계", fmtNum(totalCost) + "원")}
+        ${kpi("조회월 물류마진", fmtNum(totalMargin) + "원")}
+        ${kpi("평균 마진율", marginRate + "%")}
+      </div>
+      <div class="tableWrap">
+      <table style="table-layout:fixed">
+        <colgroup>
+          <col style="width:140px"><col style="width:56px"><col style="width:120px"><col style="width:120px">
+          <col style="width:120px"><col style="width:80px"><col style="width:100px"><col style="width:160px"><col style="width:100px">
+        </colgroup>
+        <thead><tr>
+          <th>매장명</th><th>구분</th><th>공급액(청구액)</th><th>매입원가</th>
+          <th>마진액</th><th>마진율</th><th>확인자</th><th>비고</th><th>작업</th>
+        </tr></thead>
+        <tbody id="logisticsBody">
+          ${state.stores.map(s => logisticsRowHtml(s, byStore[s.id])).join("")}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  `;
+  bindMonthPicker(main, () => renderLogistics(main));
+
+  const body = $("#logisticsBody");
+  body.addEventListener("input", (e) => {
+    const tr = e.target.closest("tr"); if (tr) tr.classList.add("dirty");
+  });
+  body.addEventListener("click", async (e) => {
+    if (!e.target.closest(".save")) return;
+    const tr = e.target.closest("tr");
+    const storeId = tr.dataset.storeId;
+    const payload = { month: state.currentMonth, store_id: storeId, updated_by: state.userName };
+    $all("[data-key]", tr).forEach(el => { payload[el.dataset.key] = el.value === "" ? null : el.value; });
+    const { error: saveErr } = await sb.from("supply_margin").upsert(payload, { onConflict: "month,store_id" });
+    if (saveErr) { alert("저장 실패: " + saveErr.message); return; }
+    tr.classList.remove("dirty");
+    toast("저장되었습니다");
+  });
+}
+function logisticsRowHtml(store, r) {
+  r = r || {};
+  const supply = Number(r.supply_amount) || 0;
+  const cost = Number(r.cost_amount) || 0;
+  const margin = supply - cost;
+  const rate = supply ? Math.round((margin / supply) * 1000) / 10 : 0;
+  return `<tr data-store-id="${store.id}">
+    <td>${escapeHtml(store.name)}</td>
+    <td>${escapeHtml(store.type)}</td>
+    <td><input type="number" data-key="supply_amount" value="${r.supply_amount ?? ""}"></td>
+    <td><input type="number" data-key="cost_amount" value="${r.cost_amount ?? ""}"></td>
+    <td class="readonly"><input value="${fmtNum(margin)}" disabled></td>
+    <td class="readonly"><input value="${rate}%" disabled></td>
+    <td><input type="text" data-key="confirmer" value="${escapeHtml(r.confirmer)}"></td>
+    <td><input type="text" data-key="notes" value="${escapeHtml(r.notes)}"></td>
+    <td class="rowActions"><button class="iconBtn save">저장</button></td>
+  </tr>`;
+}
 function shiftMonth(ym, delta) {
   const [y, m] = ym.split("-").map(Number);
   const d = new Date(y, m - 1 + delta, 1);
@@ -551,6 +652,8 @@ async function renderMonthly(main) {
   const { data: issuesAll } = await sb.from("issues").select("*");
   const { data: openings } = await sb.from("new_store_openings").select("*").neq("opening_stage", "오픈완료");
   const { data: narrativeRow } = await sb.from("monthly_narrative").select("*").eq("month", state.currentMonth).maybeSingle();
+  const { data: marginRows } = await sb.from("supply_margin").select("*").eq("month", state.currentMonth);
+  const totalMargin = (marginRows || []).reduce((a, r) => a + ((Number(r.supply_amount) || 0) - (Number(r.cost_amount) || 0)), 0);
 
   const totalSales = (salesRows || []).reduce((a, r) => a + (Number(r.sales) || 0), 0);
   const totalRoyalty = (salesRows || []).reduce((a, r) => {
@@ -570,6 +673,7 @@ async function renderMonthly(main) {
         ${kpi("로열티발생액", fmtNum(totalRoyalty) + "원")}
         ${kpi("로열티입금액", fmtNum(totalPaid) + "원")}
         ${kpi("미수금", fmtNum(totalUnpaid) + "원", totalUnpaid > 0 ? "danger" : "")}
+        ${kpi("물류마진", fmtNum(totalMargin) + "원")}
         ${kpi("전체 이슈수", issueCount)}
         ${kpi("완료 이슈수", doneIssueCount)}
         ${kpi("신규오픈 진행중", (openings || []).length)}
@@ -644,12 +748,32 @@ function renderTasks(main) {
 }
 
 // ---------- 09 가맹문의관리 ----------
-function renderFranchiseInquiries(main) {
+async function renderFranchiseInquiries(main) {
+  const { data: leads } = await sb.from("franchise_inquiries").select("status");
+  const rows = leads || [];
+  const countOf = (...statuses) => rows.filter(r => statuses.includes(r.status)).length;
+  const total = rows.length;
+  const won = countOf("계약완료");
+  const lost = countOf("보류", "거절");
+  const rate = total ? Math.round((won / total) * 1000) / 10 : 0;
+  const summaryHtml = `
+    <div class="kpiGrid" style="margin-bottom:12px">
+      ${kpi("전체 문의", total)}
+      ${kpi("신규문의", countOf("신규문의"))}
+      ${kpi("상담중", countOf("상담중"))}
+      ${kpi("현장방문", countOf("현장방문예정", "현장방문완료"))}
+      ${kpi("계약검토", countOf("계약검토"))}
+      ${kpi("계약완료", won)}
+      ${kpi("보류/거절", lost)}
+      ${kpi("전환율(계약완료/전체)", rate + "%")}
+    </div>`;
+
   return mountCrudTable(main, {
     table: "franchise_inquiries",
     title: "가맹문의관리",
     orderCol: "inquiry_date",
     addDefaults: { inquiry_date: new Date().toISOString().slice(0, 10), status: "신규문의" },
+    summaryHtml,
     columns: [
       { key: "inquiry_date", label: "문의일", type: "date" },
       { key: "contact_name", label: "문의자명" },
@@ -688,6 +812,7 @@ async function renderSettings(main) {
         <div><label>신규오픈 예정일 임박 알림 (일)</label><input type="number" id="a_newstore" value="${s.new_store_due_days ?? 14}"></div>
         <div><label>본부장 업무 마감 임박 알림 (일)</label><input type="number" id="a_task" value="${s.manager_task_due_days ?? 3}"></div>
         <div><label>미수금 경고 기준액 (원)</label><input type="number" id="a_unpaid" value="${s.unpaid_threshold ?? 0}"></div>
+        <div><label>가맹문의 후속조치 임박 알림 (일)</label><input type="number" id="a_lead" value="${s.lead_followup_due_days ?? 3}"></div>
       </div>
       <div style="margin-top:12px"><button class="primary" id="saveAlertBtn">저장</button></div>
     </div>
@@ -712,6 +837,7 @@ async function renderSettings(main) {
       new_store_due_days: Number($("#a_newstore").value) || 0,
       manager_task_due_days: Number($("#a_task").value) || 0,
       unpaid_threshold: Number($("#a_unpaid").value) || 0,
+      lead_followup_due_days: Number($("#a_lead").value) || 0,
       updated_by: state.userName,
     };
     const { error } = await sb.from("alert_settings").upsert(payload, { onConflict: "id" });

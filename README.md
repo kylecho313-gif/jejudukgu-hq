@@ -9,6 +9,7 @@
 1. https://supabase.com 가입 → New Project 생성 (Region: Northeast Asia Seoul 권장)
 2. 왼쪽 메뉴 **SQL Editor** → New query → `db/schema.sql` 파일 내용 전체 복사/붙여넣기 → Run
    - 매장 10개(하남 본점 등)와 드롭다운 기본값이 자동으로 들어갑니다.
+   - 이미 운영 중인 프로젝트에 기능을 추가할 때는 `db/migration_NN_*.sql` 파일들을 번호 순서대로 같은 방식(SQL Editor에 붙여넣고 Run)으로 추가 실행하면 됩니다. 재실행해도 안전하게 작성되어 있습니다.
 3. 왼쪽 메뉴 **Settings → API** → `Project URL` 과 `anon public` 키를 복사
 4. `js/config.js` 열어서 `SUPABASE_URL`, `SUPABASE_ANON_KEY` 값을 붙여넣고, `APP_PASSWORD`를 직원들과 공유할 비밀번호로 변경
 
@@ -45,6 +46,8 @@ powershell -ExecutionPolicy Bypass -File "serve.ps1"
 | 월간요약 | `monthly_narrative` (수치는 자동집계) |
 | 신규오픈 | `new_store_openings` |
 | 본부장업무 | `manager_tasks` |
+| 가맹문의 | `franchise_inquiries` |
+| 물류마진 | `supply_margin` |
 | 설정 | `alert_settings`, `dropdown_options` |
 
 ## 5. 향후 개선 아이디어 (필요시 요청)
