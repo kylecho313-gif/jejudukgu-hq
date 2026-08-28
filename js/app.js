@@ -129,6 +129,7 @@ const TABS = [
   { id: "tasks", label: "본부장업무", render: renderTasks },
   { id: "leads", label: "가맹문의", render: renderFranchiseInquiries },
   { id: "logistics", label: "물류마진", render: renderLogistics },
+  { id: "pnl", label: "매장손익", render: renderPnl },
   { id: "settings", label: "설정", render: renderSettings },
 ];
 function buildTabs() {
@@ -598,6 +599,85 @@ function logisticsRowHtml(store, r) {
     <td class="rowActions"><button class="iconBtn save">저장</button></td>
   </tr>`;
 }
+// ---------- 11 매장손익 통합뷰 ----------
+async function renderPnl(main) {
+  await loadStores();
+  const monthOptions = monthPickerHtml(state.currentMonth);
+  const { data: salesRows } = await sb.from("sales_royalty").select("*").eq("month", state.currentMonth);
+  const { data: marginRows } = await sb.from("supply_margin").select("*").eq("month", state.currentMonth);
+  const salesByStore = {}; for (const r of salesRows || []) salesByStore[r.store_id] = r;
+  const marginByStore = {}; for (const r of marginRows || []) marginByStore[r.store_id] = r;
+
+  let totalSales = 0, totalRoyalty = 0, totalRoyaltyPaid = 0, totalSupply = 0, totalCost = 0, totalMargin = 0, totalHq = 0;
+
+  const rowsHtml = state.stores.map(s => {
+    const sr = salesByStore[s.id] || {};
+    const mr = marginByStore[s.id] || {};
+    const sales = Number(sr.sales) || 0;
+    const rate = Number(s.royalty_rate) || 0;
+    const royalty = sales * rate / 100;
+    const royaltyPaid = Number(sr.payment_amount) || 0;
+    const supply = Number(mr.supply_amount) || 0;
+    const cost = Number(mr.cost_amount) || 0;
+    const margin = supply - cost;
+    const hqRevenue = royaltyPaid + margin;
+
+    totalSales += sales; totalRoyalty += royalty; totalRoyaltyPaid += royaltyPaid;
+    totalSupply += supply; totalCost += cost; totalMargin += margin; totalHq += hqRevenue;
+
+    return `<tr>
+      <td>${escapeHtml(s.name)}</td>
+      <td>${escapeHtml(s.type)}</td>
+      <td>${fmtNum(sales)}</td>
+      <td>${fmtNum(royalty)}</td>
+      <td>${fmtNum(royaltyPaid)}</td>
+      <td>${fmtNum(supply)}</td>
+      <td>${fmtNum(cost)}</td>
+      <td>${fmtNum(margin)}</td>
+      <td><b>${fmtNum(hqRevenue)}</b></td>
+    </tr>`;
+  }).join("");
+
+  main.innerHTML = `
+    <div class="panel">
+      <div class="toolbar">
+        <h2 style="margin:0">매장별 손익(본사 수익) 통합뷰</h2>
+        <div class="right">월 ${monthOptions}</div>
+      </div>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 12px">본사 순수익 = 로열티 입금액 + 물류마진 (매출·로열티, 물류마진 탭의 입력값을 자동 합산한 조회 전용 화면입니다)</p>
+      <div class="kpiGrid" style="margin-bottom:12px">
+        ${kpi("조회월 총매출", fmtNum(totalSales) + "원")}
+        ${kpi("로열티 발생액", fmtNum(totalRoyalty) + "원")}
+        ${kpi("로열티 입금액", fmtNum(totalRoyaltyPaid) + "원")}
+        ${kpi("물류마진", fmtNum(totalMargin) + "원")}
+        ${kpi("본사 총순수익", fmtNum(totalHq) + "원")}
+      </div>
+      <div class="tableWrap">
+      <table style="table-layout:fixed">
+        <colgroup>
+          <col style="width:140px"><col style="width:56px"><col style="width:110px"><col style="width:110px">
+          <col style="width:110px"><col style="width:110px"><col style="width:110px"><col style="width:100px"><col style="width:120px">
+        </colgroup>
+        <thead><tr>
+          <th>매장명</th><th>구분</th><th>월매출</th><th>로열티발생액</th><th>로열티입금액</th>
+          <th>물류공급액</th><th>물류원가</th><th>물류마진</th><th>본사순수익</th>
+        </tr></thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+        <tfoot>
+          <tr style="font-weight:bold;background:var(--bg2,#f5f5f5)">
+            <td>합계</td><td></td><td>${fmtNum(totalSales)}</td><td>${fmtNum(totalRoyalty)}</td><td>${fmtNum(totalRoyaltyPaid)}</td>
+            <td>${fmtNum(totalSupply)}</td><td>${fmtNum(totalCost)}</td><td>${fmtNum(totalMargin)}</td><td>${fmtNum(totalHq)}</td>
+          </tr>
+        </tfoot>
+      </table>
+      </div>
+    </div>
+  `;
+  bindMonthPicker(main, () => renderPnl(main));
+}
+
 function shiftMonth(ym, delta) {
   const [y, m] = ym.split("-").map(Number);
   const d = new Date(y, m - 1 + delta, 1);
