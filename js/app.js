@@ -522,11 +522,6 @@ async function renderLogistics(main) {
   await loadStores();
   const monthOptions = monthPickerHtml(state.currentMonth);
   const { data: rows, error } = await sb.from("supply_margin").select("*").eq("month", state.currentMonth);
-  if (error) {
-    main.innerHTML = `<div class="panel">불러오기 실패: ${escapeHtml(error.message)}
-      <p style="color:var(--muted);font-size:12px">supply_margin 테이블이 없다면 db/migration_02_logistics_and_leads.sql을 Supabase SQL Editor에서 먼저 실행해주세요.</p></div>`;
-    return;
-  }
   const byStore = {}; for (const r of rows || []) byStore[r.store_id] = r;
 
   const totalSupply = (rows || []).reduce((a, r) => a + (Number(r.supply_amount) || 0), 0);
@@ -538,7 +533,12 @@ async function renderLogistics(main) {
     <div class="panel">
       <div class="toolbar">
         <h2 style="margin:0">물류/식자재 마진관리</h2>
-        <div class="right">월 ${monthOptions}</div>
+        <div class="right">
+          월 ${monthOptions}
+          <input type="number" id="logisticsUploadYear" class="monthPicker" style="width:80px" placeholder="연도" value="${state.currentMonth.slice(0, 4)}">
+          <button class="iconBtn" id="logisticsUploadBtn">엑셀 업로드</button>
+          <input type="file" id="logisticsFileInput" accept=".xlsx,.xls" style="display:none">
+        </div>
       </div>
       <div class="kpiGrid" style="margin-bottom:12px">
         ${kpi("조회월 공급액 합계", fmtNum(totalSupply) + "원")}
@@ -546,6 +546,11 @@ async function renderLogistics(main) {
         ${kpi("조회월 물류마진", fmtNum(totalMargin) + "원")}
         ${kpi("평균 마진율", marginRate + "%")}
       </div>
+      <div id="logisticsUploadPreview"></div>
+      ${error ? `
+      <div class="alertBox">불러오기 실패: ${escapeHtml(error.message)}
+        <p style="color:var(--muted);font-size:12px;margin:4px 0 0">supply_margin 테이블이 없다면 db/migration_02_logistics_and_leads.sql을 Supabase SQL Editor에서 먼저 실행해주세요.</p></div>
+      ` : `
       <div class="tableWrap">
       <table style="table-layout:fixed">
         <colgroup>
@@ -561,24 +566,203 @@ async function renderLogistics(main) {
         </tbody>
       </table>
       </div>
+      `}
     </div>
   `;
   bindMonthPicker(main, () => renderLogistics(main));
 
   const body = $("#logisticsBody");
-  body.addEventListener("input", (e) => {
-    const tr = e.target.closest("tr"); if (tr) tr.classList.add("dirty");
+  if (body) {
+    body.addEventListener("input", (e) => {
+      const tr = e.target.closest("tr"); if (tr) tr.classList.add("dirty");
+    });
+    body.addEventListener("click", async (e) => {
+      if (!e.target.closest(".save")) return;
+      const tr = e.target.closest("tr");
+      const storeId = tr.dataset.storeId;
+      const payload = { month: state.currentMonth, store_id: storeId, updated_by: state.userName };
+      $all("[data-key]", tr).forEach(el => { payload[el.dataset.key] = el.value === "" ? null : el.value; });
+      const { error: saveErr } = await sb.from("supply_margin").upsert(payload, { onConflict: "month,store_id" });
+      if (saveErr) { alert("저장 실패: " + saveErr.message); return; }
+      tr.classList.remove("dirty");
+      toast("저장되었습니다");
+    });
+  }
+
+  $("#logisticsUploadBtn", main).addEventListener("click", () => $("#logisticsFileInput", main).click());
+  $("#logisticsFileInput", main).addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const year = Number($("#logisticsUploadYear", main).value);
+    if (!year || year < 2000 || year > 2100) { alert("연도를 올바르게 입력해주세요 (예: 2025)."); return; }
+    await handleLogisticsUpload(main, file, year);
   });
-  body.addEventListener("click", async (e) => {
-    if (!e.target.closest(".save")) return;
-    const tr = e.target.closest("tr");
-    const storeId = tr.dataset.storeId;
-    const payload = { month: state.currentMonth, store_id: storeId, updated_by: state.userName };
-    $all("[data-key]", tr).forEach(el => { payload[el.dataset.key] = el.value === "" ? null : el.value; });
-    const { error: saveErr } = await sb.from("supply_margin").upsert(payload, { onConflict: "month,store_id" });
-    if (saveErr) { alert("저장 실패: " + saveErr.message); return; }
-    tr.classList.remove("dirty");
-    toast("저장되었습니다");
+}
+
+// ---------- 물류마진 엑셀 업로드 ----------
+const LOGISTICS_MONTH_SHEETS = ["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"];
+// 원본 엑셀 매장명 → 웹앱 stores.name 매핑. 동명점/화정점은 현재 매장 목록에 없어(2026-09-02 확인, 정체 미확인) 의도적으로 제외.
+const LOGISTICS_STORE_MAP = {
+  "본점": "하남 본점",
+  "상일점": "상일동점",
+  "구월점": "구월점",
+  "광주하남점": "광주하남점",
+  "위례점": "위례점",
+  "삼성점": "삼성점",
+  "경기광주점": "경기광주점",
+};
+
+function parseLogisticsWorkbook(wb, year) {
+  const results = [];
+  const skipped = {}; // storeLabel -> count
+  for (let mi = 0; mi < LOGISTICS_MONTH_SHEETS.length; mi++) {
+    const ws = wb.Sheets[LOGISTICS_MONTH_SHEETS[mi]];
+    if (!ws || !ws["!ref"]) continue;
+    const monthStr = `${year}-${String(mi + 1).padStart(2, "0")}`;
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    const blocks = [];
+    let current = null;
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      const aCell = ws[XLSX.utils.encode_cell({ r, c: 0 })];
+      const bCell = ws[XLSX.utils.encode_cell({ r, c: 1 })];
+      const fCell = ws[XLSX.utils.encode_cell({ r, c: 5 })];
+      const gCell = ws[XLSX.utils.encode_cell({ r, c: 6 })];
+      const aText = (aCell && typeof aCell.v === "string") ? aCell.v.trim() : "";
+      if (aText === "합계") {
+        if (current) {
+          current.supply = Number(fCell?.v) || 0;
+          current.marginRaw = Number(gCell?.v) || 0;
+          blocks.push(current);
+        }
+        current = null;
+        continue;
+      }
+      if (aText && aText !== "지점") {
+        current = { storeLabel: aText, manualItems: [], supply: 0, marginRaw: 0 };
+        continue;
+      }
+      if (!current) continue;
+      const label = (bCell && typeof bCell.v === "string") ? bCell.v.trim() : "";
+      const gVal = (gCell && typeof gCell.v === "number") ? gCell.v : 0;
+      const isFormula = !!(gCell && gCell.f);
+      if (!isFormula && gVal) {
+        current.manualItems.push({ label: label || "(라벨없음)", amount: gVal });
+      }
+    }
+    for (const b of blocks) {
+      const manualTotal = b.manualItems.reduce((a, x) => a + x.amount, 0);
+      const mappedName = LOGISTICS_STORE_MAP[b.storeLabel];
+      if (!mappedName) {
+        if (b.supply || b.marginRaw) skipped[b.storeLabel] = (skipped[b.storeLabel] || 0) + 1;
+        continue;
+      }
+      if (!b.supply && !b.marginRaw) continue;
+      const margin = b.marginRaw - manualTotal; // 수식으로 계산된 순수 상품마진만 반영 (수기조정 제외)
+      const cost = b.supply - margin;
+      results.push({
+        month: monthStr,
+        monthLabel: LOGISTICS_MONTH_SHEETS[mi],
+        storeLabel: b.storeLabel,
+        storeName: mappedName,
+        supply_amount: b.supply,
+        cost_amount: cost,
+        margin,
+        manualItems: b.manualItems,
+        manualTotal,
+      });
+    }
+  }
+  return { results, skipped };
+}
+
+async function handleLogisticsUpload(main, file, year) {
+  await loadStores();
+  let wb;
+  try {
+    const buf = await file.arrayBuffer();
+    wb = XLSX.read(buf, { type: "array" });
+  } catch (err) {
+    alert("엑셀 파일을 읽지 못했습니다: " + (err.message || err));
+    return;
+  }
+  const { results, skipped } = parseLogisticsWorkbook(wb, year);
+  const storeByName = {}; for (const s of state.stores) storeByName[s.name] = s;
+  const rows = results.map((r, idx) => ({ ...r, idx, storeId: storeByName[r.storeName]?.id || null }));
+  renderLogisticsUploadPreview(main, rows, skipped, year);
+}
+
+function renderLogisticsUploadPreview(main, rows, skipped, year) {
+  const box = $("#logisticsUploadPreview", main);
+  const skippedList = Object.entries(skipped).map(([name, cnt]) => `${escapeHtml(name)}(${cnt}건)`).join(", ");
+  const unresolvedRows = rows.filter(r => !r.storeId);
+  const usableRows = rows.filter(r => r.storeId);
+
+  box.innerHTML = `
+    <div class="panel" style="border-color:var(--accent)">
+      <div class="toolbar">
+        <h2 style="margin:0">엑셀 업로드 미리보기 · ${year}년</h2>
+        <div class="right">
+          <button class="iconBtn" id="logisticsPreviewCancel">취소</button>
+          <button class="primary" id="logisticsPreviewCommit">선택 항목 저장 (${usableRows.length}건)</button>
+        </div>
+      </div>
+      ${skippedList ? `<div class="alertBox warn">매핑되지 않아 제외된 매장: ${skippedList} — 현재 매장 목록에 없는 이름입니다.</div>` : ""}
+      ${unresolvedRows.length ? `<div class="alertBox warn">DB에서 매장을 찾지 못해 제외됨: ${unresolvedRows.map(r => escapeHtml(r.storeName)).join(", ")}</div>` : ""}
+      <div class="alertBox">공급액·매입원가는 품목별 수식 계산분만 반영했습니다. 원본에 있던 수기입력 조정 항목(로열티 등으로 보이는 금액)은 마진 계산에서 제외하고 비고란에 참고용으로만 남겼습니다 — 매출·로열티 탭과 중복 여부를 확인해주세요.</div>
+      <div class="tableWrap">
+        <table>
+          <thead><tr>
+            <th><input type="checkbox" id="logisticsPreviewAll" checked></th>
+            <th>월</th><th>매장</th><th>공급액</th><th>매입원가</th><th>물류마진</th><th>수기조정(참고,미반영)</th>
+          </tr></thead>
+          <tbody id="logisticsPreviewBody">
+            ${usableRows.map(r => `
+              <tr data-idx="${r.idx}">
+                <td><input type="checkbox" class="rowChk" checked></td>
+                <td>${r.month}</td>
+                <td>${escapeHtml(r.storeName)}</td>
+                <td>${fmtNum(r.supply_amount)}</td>
+                <td>${fmtNum(r.cost_amount)}</td>
+                <td>${fmtNum(r.margin)}</td>
+                <td style="color:var(--muted);font-size:12px">${r.manualTotal ? r.manualItems.map(m => `${escapeHtml(m.label)} ${fmtNum(m.amount)}`).join(", ") : "-"}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  box._rows = usableRows;
+
+  $("#logisticsPreviewCancel", box).addEventListener("click", () => { box.innerHTML = ""; });
+  $("#logisticsPreviewAll", box).addEventListener("change", (e) => {
+    $all(".rowChk", box).forEach(chk => chk.checked = e.target.checked);
+  });
+  $("#logisticsPreviewCommit", box).addEventListener("click", async () => {
+    const checkedTrs = $all("#logisticsPreviewBody tr", box).filter(tr => $(".rowChk", tr).checked);
+    const selectedIdx = new Set(checkedTrs.map(tr => Number(tr.dataset.idx)));
+    const selected = usableRows.filter(r => selectedIdx.has(r.idx));
+    if (!selected.length) { alert("저장할 항목을 선택해주세요."); return; }
+    const payload = selected.map(r => {
+      const p = {
+        month: r.month,
+        store_id: r.storeId,
+        supply_amount: r.supply_amount,
+        cost_amount: r.cost_amount,
+        updated_by: state.userName,
+      };
+      if (r.manualTotal) {
+        p.notes = `[엑셀 업로드] 원본 수기조정 항목 미반영: ${r.manualItems.map(m => `${m.label} ${fmtNum(m.amount)}원`).join(", ")} — 로열티 등 중복집계 여부 확인 필요`;
+      }
+      return p;
+    });
+    const btn = $("#logisticsPreviewCommit", box);
+    btn.disabled = true; btn.textContent = "저장 중...";
+    const { error } = await sb.from("supply_margin").upsert(payload, { onConflict: "month,store_id" });
+    if (error) { alert("저장 실패: " + error.message); btn.disabled = false; btn.textContent = "선택 항목 저장"; return; }
+    toast(`${selected.length}건 저장되었습니다`);
+    box.innerHTML = "";
+    renderLogistics(main);
   });
 }
 function logisticsRowHtml(store, r) {
