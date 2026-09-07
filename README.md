@@ -50,7 +50,27 @@ powershell -ExecutionPolicy Bypass -File "serve.ps1"
 | 물류마진 | `supply_margin` |
 | 설정 | `alert_settings`, `dropdown_options` |
 
-## 5. 향후 개선 아이디어 (필요시 요청)
+`staff`, `attendance_logs` 테이블은 본사 통합관리 웹앱이 아니라 아래 5번 "하남본점 알바관리" 별도 페이지에서 사용합니다.
+
+## 5. 하남본점 알바관리 (별도 프로그램)
+
+본사 통합관리 웹앱(`index.html`)과는 별개로, 하남 본점 알바 출퇴근/급여정산 전용 페이지 2개가 같은 사이트에 함께 배포됩니다.
+같은 Supabase 프로젝트를 공유하므로 별도 설정은 필요 없고, `db/migration_03_attendance.sql` 만 SQL Editor에서 한 번 실행하면 됩니다
+(테이블: `staff` 알바 명단, `attendance_logs` 출퇴근 기록).
+
+**① `attendance.html` — 알바용 출퇴근 체크**
+- 배포 후 주소: `https://[아이디].github.io/jejudukgu-hq/attendance.html` — 매장 태블릿/폰에 바로가기로 등록해두고 사용
+- 관리자 비밀번호 불필요. 이름 선택 → 개인 PIN 4자리 입력 → 출근하기/퇴근하기 버튼만 누르면 됨
+- 이미 출근 중이면 자동으로 퇴근 화면으로 전환되고 경과 근무시간을 보여줌
+
+**② `attendance-admin.html` — 관리자용 알바관리**
+- 배포 후 주소: `https://[아이디].github.io/jejudukgu-hq/attendance-admin.html`
+- 본사 통합관리 웹앱과 같은 공유 비밀번호(`config.js`의 `APP_PASSWORD`)로 접속
+- 알바 이름/PIN/시급 등록·수정, 오늘 출퇴근 현황, 근태기록 직접 수정(퇴근 체크 누락 보정용), 월별 정산표(기본급+주휴수당 추정치) 제공
+- 주휴수당은 "해당 주 실근무시간 15시간 이상 시 (주 근무시간÷40, 최대1)×8×시급" 간이 계산이며 결근 여부는 반영하지 못함 — 정확한 지급액은 노무사 확인 권장
+- 현재 하남 본점 전용(다른 매장 확장은 필요시 요청)
+
+## 6. 향후 개선 아이디어 (필요시 요청)
 
 - 직원별 개별 로그인 계정 (현재는 공유 비밀번호 + 이름 표기)
 - 엑셀 내보내기/가져오기

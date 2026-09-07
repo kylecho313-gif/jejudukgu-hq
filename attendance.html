@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>제주덕구 출퇴근</title>
+<link rel="stylesheet" href="css/attendance.css">
+</head>
+<body>
+
+<div class="wrap">
+  <header class="head">
+    <div class="brand">제주덕구 <span id="storeName">하남 본점</span></div>
+    <div class="clock" id="liveClock"></div>
+  </header>
+
+  <main id="stage">
+    <section id="screenName" class="screen">
+      <h1>이름을 선택해주세요</h1>
+      <div class="nameGrid" id="nameGrid"><p class="hint">불러오는 중...</p></div>
+    </section>
+
+    <section id="screenPin" class="screen" hidden>
+      <button class="backBtn" id="pinBackBtn">← 뒤로</button>
+      <h1><span id="pinStaffName"></span>님</h1>
+      <p class="hint">PIN 4자리를 입력해주세요</p>
+      <input id="pinInput" class="pinInput" type="tel" inputmode="numeric" maxlength="4" autocomplete="off">
+      <div class="pinDots" id="pinDots"><span></span><span></span><span></span><span></span></div>
+      <p class="err" id="pinErr"></p>
+    </section>
+
+    <section id="screenAction" class="screen" hidden>
+      <button class="backBtn" id="actionBackBtn">← 뒤로</button>
+      <h1 id="actionTitle"></h1>
+      <p class="hint" id="actionSub"></p>
+      <div class="infoBox" id="actionInfo" hidden></div>
+      <button class="bigBtn" id="actionBtn"></button>
+    </section>
+
+    <section id="screenDone" class="screen" hidden>
+      <div class="doneIcon" id="doneIcon">✅</div>
+      <h1 id="doneMsg"></h1>
+      <p class="hint">잠시 후 처음 화면으로 돌아갑니다</p>
+    </section>
+  </main>
+
+  <footer class="foot">제주덕구 알바 출퇴근 · 본인 PIN으로만 출퇴근을 처리해주세요</footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/attendance.js?v=1"></script>
+</body>
+</html>
