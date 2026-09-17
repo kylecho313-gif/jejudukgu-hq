@@ -81,7 +81,7 @@ async function submitPin() {
 
 async function openActionScreen() {
   const { data: logs, error } = await sb.from("attendance_logs")
-    .select("*").eq("staff_id", state.selected.id).order("clock_in", { ascending: false }).limit(1);
+    .select("*").eq("staff_id", state.selected.id).is("deleted_at", null).order("clock_in", { ascending: false }).limit(1);
   if (error) { $("#pinErr").textContent = "출퇴근 기록을 불러오지 못했습니다."; return; }
   const last = (logs || [])[0];
   const open = !!(last && !last.clock_out);

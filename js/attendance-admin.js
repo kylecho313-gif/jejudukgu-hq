@@ -154,13 +154,15 @@ async function renderApp(main) {
   const staffIds = (staffList || []).map(s => s.id);
   const staffMap = Object.fromEntries((staffList || []).map(s => [s.id, s]));
 
-  let todayLogs = [], rangeLogs = [];
+  // 출퇴근 기록은 실제로 지우지 않고 deleted_at으로 숨김 처리(migration_06) — 숨긴 기록은 조회에서 제외
+  let todayLogs = [], rangeLogs = [], deletedLogs = [];
   if (staffIds.length) {
-    const [{ data: t }, { data: r }] = await Promise.all([
-      sb.from("attendance_logs").select("*").in("staff_id", staffIds).eq("work_date", today).order("clock_in"),
-      sb.from("attendance_logs").select("*").in("staff_id", staffIds).gte("work_date", padStart).lte("work_date", padEnd).order("work_date", { ascending: false }).order("clock_in", { ascending: false }),
+    const [{ data: t }, { data: r }, { data: d }] = await Promise.all([
+      sb.from("attendance_logs").select("*").in("staff_id", staffIds).is("deleted_at", null).eq("work_date", today).order("clock_in"),
+      sb.from("attendance_logs").select("*").in("staff_id", staffIds).is("deleted_at", null).gte("work_date", padStart).lte("work_date", padEnd).order("work_date", { ascending: false }).order("clock_in", { ascending: false }),
+      sb.from("attendance_logs").select("*").in("staff_id", staffIds).not("deleted_at", "is", null).gte("work_date", monthStart).lte("work_date", monthEnd).order("deleted_at", { ascending: false }),
     ]);
-    todayLogs = t || []; rangeLogs = r || [];
+    todayLogs = t || []; rangeLogs = r || []; deletedLogs = d || [];
   }
   const monthLogs = rangeLogs.filter(l => l.work_date >= monthStart && l.work_date <= monthEnd);
 
@@ -224,6 +226,19 @@ async function renderApp(main) {
         <tbody id="logsBody">${monthLogs.map(l => logRowHtml(l, staffMap[l.staff_id]?.name || "(삭제된 알바)")).join("") || `<tr><td colspan="6" style="color:var(--muted)">이번 달 기록이 없습니다.</td></tr>`}</tbody>
       </table></div>
     </div>
+
+    ${deletedLogs.length ? `<div class="panel">
+      <h2 style="margin:0 0 4px">삭제한 근태기록 · ${monthStr} <small>정산에서 빠진 기록 · 복원하면 다시 반영됩니다</small></h2>
+      <div class="tableWrap"><table>
+        <thead><tr><th>이름</th><th>근무일</th><th>출근</th><th>퇴근</th><th>삭제한 사람</th><th>삭제 시각</th><th>작업</th></tr></thead>
+        <tbody id="deletedBody">${deletedLogs.map(l => `<tr data-id="${l.id}">
+          <td>${escapeHtml(staffMap[l.staff_id]?.name || "")}</td><td>${l.work_date}</td>
+          <td>${escapeHtml(toDatetimeLocal(l.clock_in).replace("T", " "))}</td><td>${escapeHtml(toDatetimeLocal(l.clock_out).replace("T", " "))}</td>
+          <td>${escapeHtml(l.deleted_by)}</td><td>${escapeHtml(toDatetimeLocal(l.deleted_at).replace("T", " "))}</td>
+          <td class="rowActions"><button class="iconBtn restore">복원</button></td>
+        </tr>`).join("")}</tbody>
+      </table></div>
+    </div>` : ""}
 
     <div class="panel">
       <h2 style="margin:0 0 4px">월별 정산 · ${monthStr}</h2>
@@ -310,12 +325,26 @@ async function renderApp(main) {
         renderApp(main);
       }
       if (e.target.closest(".del")) {
-        if (!confirm("이 기록을 삭제할까요?")) return;
-        const { error } = await sb.from("attendance_logs").delete().eq("id", id);
+        if (!confirm("이 기록을 삭제할까요? (정산에서 빠지며, 아래 '삭제한 근태기록'에서 복원할 수 있습니다)")) return;
+        const { error } = await sb.from("attendance_logs")
+          .update({ deleted_at: new Date().toISOString(), deleted_by: state.userName }).eq("id", id);
         if (error) { alert("삭제 실패: " + error.message); return; }
         toast("삭제되었습니다");
         renderApp(main);
       }
+    });
+  }
+
+  const deletedBody = $("#deletedBody");
+  if (deletedBody) {
+    deletedBody.addEventListener("click", async (e) => {
+      if (!e.target.closest(".restore")) return;
+      const id = e.target.closest("tr").dataset.id;
+      const { error } = await sb.from("attendance_logs")
+        .update({ deleted_at: null, deleted_by: null, updated_by: state.userName }).eq("id", id);
+      if (error) { alert("복원 실패: " + error.message); return; }
+      toast("복원되었습니다");
+      renderApp(main);
     });
   }
 }
