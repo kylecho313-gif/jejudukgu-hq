@@ -7,7 +7,7 @@ const state = {
   dropdowns: {},
   alertSettings: {},
   currentMonth: monthNow(),
-  userName: localStorage.getItem("jdg_name") || "",
+  userName: "",
 };
 
 // ---------- 유틸 ----------
@@ -69,26 +69,11 @@ async function loadAlertSettings() {
 }
 
 // ---------- 로그인 ----------
+// 관리자 개별 로그인 (js/auth.js)
 function initLogin() {
-  const authed = localStorage.getItem("jdg_authed") === "true";
-  if (authed && state.userName) { startApp(); return; }
-  $("#loginScreen").style.display = "flex";
-  $("#loginForm").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const pw = $("#loginPw").value;
-    const name = $("#loginName").value.trim();
-    if (!name) { $("#loginErr").textContent = "이름을 입력해주세요."; return; }
-    if (pw !== CONFIG.APP_PASSWORD) { $("#loginErr").textContent = "비밀번호가 올바르지 않습니다."; return; }
-    localStorage.setItem("jdg_authed", "true");
-    localStorage.setItem("jdg_name", name);
-    state.userName = name;
-    startApp();
-  });
+  initAdminLogin(sb, (name) => { state.userName = name; startApp(); });
 }
-function logout() {
-  localStorage.removeItem("jdg_authed");
-  location.reload();
-}
+function logout() { adminLogout(sb); }
 async function startApp() {
   $("#loginScreen").style.display = "none";
   $("#app").style.display = "block";
@@ -1086,9 +1071,13 @@ async function renderSettings(main) {
       <div class="dropdownEditor" id="ddEditor"></div>
     </div>
   `;
-  $("#saveNameBtn").addEventListener("click", () => {
-    state.userName = $("#myName").value.trim() || state.userName;
-    localStorage.setItem("jdg_name", state.userName);
+  $("#saveNameBtn").addEventListener("click", async () => {
+    const newName = $("#myName").value.trim();
+    if (!newName) return;
+    const { data: { session } } = await sb.auth.getSession();
+    const { error } = await sb.from("admin_users").update({ display_name: newName }).eq("user_id", session.user.id);
+    if (error) { alert("저장 실패: " + error.message); return; }
+    state.userName = newName;
     $("#userName").textContent = state.userName;
     toast("이름이 저장되었습니다");
   });

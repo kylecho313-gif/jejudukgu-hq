@@ -3,13 +3,13 @@
 const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 const STORE_CODE = "S001"; // 하남 본점
 
-const state = { storeId: null, staffList: [], selected: null, pendingLog: null };
+// 알바 앱은 테이블을 직접 읽거나 쓰지 않고 DB 함수(clock_*)만 호출함 — PIN 확인도 서버에서 함 (db/migration_07)
+const state = { staffList: [], selected: null, pin: "", openClockIn: null };
 
 function $(sel) { return document.querySelector(sel); }
 function escapeHtml(s) { return (s ?? "").toString().replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function pad2(n) { return String(n).padStart(2, "0"); }
 function fmtHm(d) { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
-function ymd(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
 function fmtElapsed(ms) { const total = Math.max(0, Math.floor(ms / 60000)); return `${Math.floor(total / 60)}시간 ${total % 60}분`; }
 
 function showScreen(id) {
@@ -25,20 +25,19 @@ function tickClock() {
 async function init() {
   tickClock();
   setInterval(tickClock, 30000);
-  const { data: store, error } = await sb.from("stores").select("id,name").eq("store_code", STORE_CODE).single();
-  if (error || !store) {
+  const { data: storeName, error } = await sb.rpc("clock_store_name", { p_store_code: STORE_CODE });
+  if (error || !storeName) {
     $("#nameGrid").innerHTML = `<p class="empty">매장 정보를 불러오지 못했습니다.<br>관리자에게 문의해주세요.</p>`;
     return;
   }
-  state.storeId = store.id;
-  $("#storeName").textContent = store.name;
+  $("#storeName").textContent = storeName;
   await loadStaff();
   renderNameGrid();
   bindEvents();
 }
 
 async function loadStaff() {
-  const { data, error } = await sb.from("staff").select("id,name,pin").eq("store_id", state.storeId).eq("active", true).order("name");
+  const { data, error } = await sb.rpc("clock_staff_list", { p_store_code: STORE_CODE });
   state.staffList = error ? [] : (data || []);
 }
 
@@ -69,27 +68,31 @@ function updatePinDots(val) {
 async function submitPin() {
   const val = $("#pinInput").value;
   if (val.length !== 4) return;
-  if (val !== state.selected.pin) {
-    $("#pinErr").textContent = "PIN이 올바르지 않습니다. 다시 입력해주세요.";
+  const { data, error } = await sb.rpc("clock_check", { p_staff_id: state.selected.id, p_pin: val });
+  if (error || !data || data.status !== "OK") {
+    $("#pinErr").textContent = pinErrorMessage(error ? "ERR" : data?.status);
     $("#pinInput").value = "";
     updatePinDots("");
     return;
   }
   $("#pinErr").textContent = "";
-  await openActionScreen();
+  state.pin = val;
+  state.openClockIn = data.open ? data.clock_in : null;
+  openActionScreen();
 }
 
-async function openActionScreen() {
-  const { data: logs, error } = await sb.from("attendance_logs")
-    .select("*").eq("staff_id", state.selected.id).is("deleted_at", null).order("clock_in", { ascending: false }).limit(1);
-  if (error) { $("#pinErr").textContent = "출퇴근 기록을 불러오지 못했습니다."; return; }
-  const last = (logs || [])[0];
-  const open = !!(last && !last.clock_out);
-  state.pendingLog = open ? last : null;
+function pinErrorMessage(status) {
+  if (status === "PIN") return "PIN이 올바르지 않습니다. 다시 입력해주세요.";
+  if (status === "LOCKED") return "PIN을 여러 번 틀려 잠시 잠겼습니다. 10분 후 다시 시도하거나 관리자에게 문의해주세요.";
+  return "확인 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.";
+}
+
+function openActionScreen() {
+  const open = !!state.openClockIn;
 
   const title = $("#actionTitle"), sub = $("#actionSub"), info = $("#actionInfo"), btn = $("#actionBtn");
   if (open) {
-    const inT = new Date(last.clock_in);
+    const inT = new Date(state.openClockIn);
     title.textContent = `${state.selected.name}님, 퇴근하시나요?`;
     sub.textContent = "";
     info.hidden = false;
@@ -115,20 +118,18 @@ async function handleAction() {
   const btn = $("#actionBtn");
   btn.disabled = true;
   try {
-    const now = new Date();
-    if (btn.dataset.mode === "in") {
-      const { error } = await sb.from("attendance_logs").insert({
-        staff_id: state.selected.id,
-        work_date: ymd(now),
-        clock_in: now.toISOString(),
-      });
-      if (error) throw error;
-      showDone(`출근 처리되었습니다 (${fmtHm(now)})`, "✅");
-    } else {
-      const { error } = await sb.from("attendance_logs").update({ clock_out: now.toISOString() }).eq("id", state.pendingLog.id);
-      if (error) throw error;
-      showDone(`퇴근 처리되었습니다 (${fmtHm(now)})`, "🙌");
+    const mode = btn.dataset.mode;
+    const { data, error } = await sb.rpc("clock_punch", { p_staff_id: state.selected.id, p_pin: state.pin, p_mode: mode });
+    if (error) throw error;
+    if (data?.status === "STATE") {
+      alert("출퇴근 상태가 방금 바뀌었습니다. 처음부터 다시 진행해주세요.");
+      resetToName();
+      return;
     }
+    if (data?.status !== "OK") throw new Error(pinErrorMessage(data?.status));
+    const at = new Date(data.at);
+    if (mode === "in") showDone(`출근 처리되었습니다 (${fmtHm(at)})`, "✅");
+    else showDone(`퇴근 처리되었습니다 (${fmtHm(at)})`, "🙌");
   } catch (err) {
     alert("처리 중 오류가 발생했습니다: " + (err.message || err));
   } finally {
@@ -145,7 +146,8 @@ function showDone(msg, icon) {
 
 function resetToName() {
   state.selected = null;
-  state.pendingLog = null;
+  state.pin = "";
+  state.openClockIn = null;
   showScreen("screenName");
 }
 
