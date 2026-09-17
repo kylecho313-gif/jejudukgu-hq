@@ -124,7 +124,7 @@ function staffRowHtml(s) {
     <td style="text-align:center"><input type="checkbox" data-key="withhold_3_3" ${wh3 ? "checked" : ""}></td>
     <td style="text-align:center"><input type="checkbox" data-key="active" ${s.active ? "checked" : ""}></td>
     <td><input type="text" data-key="notes" value="${escapeHtml(s.notes)}"></td>
-    <td class="rowActions"><button class="iconBtn save">저장</button><button class="iconBtn del">삭제</button></td>
+    <td class="rowActions"><button class="iconBtn save">저장</button><button class="iconBtn del" style="margin-left:12px;color:#b3261e">삭제</button></td>
   </tr>`;
 }
 function logRowHtml(l, staffName) {
@@ -245,10 +245,16 @@ async function renderApp(main) {
 
   bindMonthPicker(main, () => renderApp(main));
 
-  $("#staffAddBtn").addEventListener("click", async () => {
+  $("#staffAddBtn").addEventListener("click", async (e) => {
+    // 빈 "새 알바" 행이 연달아 쌓이지 않도록: 이름을 안 바꾼 행이 있으면 먼저 정리하게 함
+    if ((staffList || []).some(s => s.name === "새 알바")) {
+      alert('이름이 "새 알바"인 행이 이미 있습니다. 그 행의 이름·PIN·시급을 먼저 입력하고 저장해주세요.');
+      return;
+    }
+    e.currentTarget.disabled = true;
     const payload = { store_id: storeId, name: "새 알바", pin: "0000", hourly_wage: 10030, active: true, updated_by: state.userName };
     const { error } = await sb.from("staff").insert(payload);
-    if (error) { alert("추가 실패: " + error.message); return; }
+    if (error) { e.currentTarget.disabled = false; alert("추가 실패: " + error.message); return; }
     toast("알바가 추가되었습니다");
     renderApp(main);
   });
@@ -267,7 +273,17 @@ async function renderApp(main) {
       renderApp(main);
     }
     if (e.target.closest(".del")) {
-      if (!confirm("이 알바를 삭제할까요? 관련 출퇴근 기록도 함께 삭제됩니다.")) return;
+      // 출퇴근 기록이 있는 알바는 삭제 불가 — 기록·정산 보존을 위해 "재직중" 해제로 대신함
+      const { count, error: cntErr } = await sb.from("attendance_logs").select("id", { count: "exact", head: true }).eq("staff_id", id);
+      if (cntErr) { alert("확인 실패: " + cntErr.message); return; }
+      if (count > 0) {
+        alert(`출퇴근 기록이 ${count}건 있는 알바는 삭제할 수 없습니다.\n그만둔 알바라면 "재직중" 체크를 해제하고 저장해주세요.\n(출퇴근 앱 명단에서만 빠지고, 기록과 정산은 그대로 남습니다.)`);
+        return;
+      }
+      const name = staffMap[id]?.name || "";
+      const typed = prompt(`정말 삭제하려면 알바 이름을 똑같이 입력하세요: ${name}`);
+      if (typed === null) return;
+      if (typed.trim() !== name) { alert("이름이 일치하지 않아 삭제하지 않았습니다."); return; }
       const { error } = await sb.from("staff").delete().eq("id", id);
       if (error) { alert("삭제 실패: " + error.message); return; }
       toast("삭제되었습니다");
