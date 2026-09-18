@@ -195,7 +195,7 @@ async function renderApp(main) {
     <div class="panel">
       <div class="toolbar">
         <h2 style="margin:0">알바 명단 <small>하남 본점 · 출퇴근 앱(attendance.html) 로그인용 이름/PIN 관리</small></h2>
-        <div class="right"><button class="primary" id="staffAddBtn">+ 알바 추가</button></div>
+        <div class="right"><button class="primary" id="staffSaveAllBtn" disabled>변경사항 모두 저장</button> <button class="primary" id="staffAddBtn">+ 알바 추가</button></div>
       </div>
       <div class="tableWrap">
       <table>
@@ -218,7 +218,7 @@ async function renderApp(main) {
     <div class="panel">
       <div class="toolbar">
         <h2 style="margin:0">근태기록 (수정 가능)</h2>
-        <div class="right">월 ${monthPickerHtml(monthStr)}</div>
+        <div class="right"><button class="primary" id="logsSaveAllBtn" disabled>변경사항 모두 저장</button> 월 ${monthPickerHtml(monthStr)}</div>
       </div>
       <div class="tableWrap"><table>
         <colgroup><col style="width:110px"><col style="width:130px"><col style="width:170px"><col style="width:170px"><col><col style="width:100px"></colgroup>
@@ -258,7 +258,73 @@ async function renderApp(main) {
     </div>
   `;
 
-  bindMonthPicker(main, () => renderApp(main));
+  // ---- 여러 줄 수정 후 한 번에 저장 ----
+  // 한 줄 저장 시 화면 전체를 다시 그리면 다른 줄의 저장 안 한 수정이 사라지므로,
+  // 수정한 줄(.dirty)이 남아 있으면 다시 그리지 않고, 화면을 다시 그려야 할 때는 먼저 저장할지 물어본다.
+  const dirtyRows = () => $all("#staffBody tr.dirty, #logsBody tr.dirty");
+  const refreshSaveAll = () => {
+    for (const [btnId, bodyId, unit] of [["#staffSaveAllBtn", "#staffBody", "명"], ["#logsSaveAllBtn", "#logsBody", "건"]]) {
+      const btn = $(btnId); if (!btn) continue;
+      const n = $all(`${bodyId} tr.dirty`).length;
+      btn.disabled = n === 0;
+      btn.textContent = n ? `변경사항 모두 저장 (${n}${unit})` : "변경사항 모두 저장";
+    }
+    window.onbeforeunload = dirtyRows().length ? () => "저장하지 않은 변경사항이 있습니다." : null;
+  };
+  const staffPayload = (tr) => {
+    const p = { updated_by: state.userName };
+    $all("[data-key]", tr).forEach(el => { p[el.dataset.key] = el.type === "checkbox" ? el.checked : (el.value === "" ? null : el.value); });
+    return p;
+  };
+  const logPayload = (tr) => {
+    const p = { updated_by: state.userName };
+    $all("[data-key]", tr).forEach(el => {
+      let v = el.value === "" ? null : el.value;
+      if (v && (el.dataset.key === "clock_in" || el.dataset.key === "clock_out")) v = localInputToIso(v);
+      p[el.dataset.key] = v;
+    });
+    return p;
+  };
+  // 줄들을 저장하고 실패한 줄 목록을 돌려줌 (성공한 줄은 .dirty 해제)
+  const saveRows = async (rows) => {
+    const failed = [];
+    for (const tr of rows) {
+      const isStaff = !!tr.closest("#staffBody");
+      const { error } = await sb.from(isStaff ? "staff" : "attendance_logs")
+        .update(isStaff ? staffPayload(tr) : logPayload(tr)).eq("id", tr.dataset.id);
+      const label = isStaff ? tr.querySelector("[data-key=name]").value : tr.cells[0].textContent;
+      if (error) failed.push(`${label} (${error.message})`);
+      else tr.classList.remove("dirty");
+    }
+    refreshSaveAll();
+    return failed;
+  };
+  // 화면을 다시 그리기 전에 저장 안 한 수정이 있으면 먼저 저장할지 확인 (false = 진행 취소)
+  const ensureSaved = async () => {
+    const rows = dirtyRows();
+    if (!rows.length) return true;
+    if (!confirm(`저장하지 않은 변경이 ${rows.length}줄 있습니다.\n[확인] 먼저 모두 저장하고 계속\n[취소] 돌아가서 확인`)) return false;
+    const failed = await saveRows(rows);
+    if (failed.length) { alert("저장 실패:\n" + failed.join("\n")); return false; }
+    return true;
+  };
+  const saveAll = async (bodyId, unit) => {
+    const rows = $all(`${bodyId} tr.dirty`);
+    if (!rows.length) return;
+    const failed = await saveRows(rows);
+    if (failed.length) { alert("일부 저장 실패 (나머지는 저장됨):\n" + failed.join("\n")); return; }
+    toast(`${rows.length}${unit} 저장되었습니다`);
+    if (!dirtyRows().length) renderApp(main);
+  };
+  $("#staffSaveAllBtn").addEventListener("click", () => saveAll("#staffBody", "명"));
+  $("#logsSaveAllBtn").addEventListener("click", () => saveAll("#logsBody", "건"));
+
+  const monthEl = $("#monthPicker", main);
+  monthEl.addEventListener("change", async () => {
+    if (!(await ensureSaved())) { monthEl.value = state.currentMonth; return; }
+    state.currentMonth = monthEl.value;
+    renderApp(main);
+  });
 
   $("#staffAddBtn").addEventListener("click", async (e) => {
     // 빈 "새 알바" 행이 연달아 쌓이지 않도록: 이름을 안 바꾼 행이 있으면 먼저 정리하게 함
@@ -266,26 +332,30 @@ async function renderApp(main) {
       alert('이름이 "새 알바"인 행이 이미 있습니다. 그 행의 이름·PIN·시급을 먼저 입력하고 저장해주세요.');
       return;
     }
-    e.currentTarget.disabled = true;
+    const addBtn = e.currentTarget;
+    if (!(await ensureSaved())) return;
+    addBtn.disabled = true;
     const payload = { store_id: storeId, name: "새 알바", pin: "0000", hourly_wage: 10030, active: true, updated_by: state.userName };
     const { error } = await sb.from("staff").insert(payload);
-    if (error) { e.currentTarget.disabled = false; alert("추가 실패: " + error.message); return; }
+    if (error) { addBtn.disabled = false; alert("추가 실패: " + error.message); return; }
     toast("알바가 추가되었습니다");
     renderApp(main);
   });
 
   const staffBody = $("#staffBody");
-  staffBody.addEventListener("input", (e) => { const tr = e.target.closest("tr"); if (tr) tr.classList.add("dirty"); });
+  const markDirty = (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) { tr.classList.add("dirty"); refreshSaveAll(); } };
+  staffBody.addEventListener("input", markDirty);
+  staffBody.addEventListener("change", markDirty);
   staffBody.addEventListener("click", async (e) => {
     const tr = e.target.closest("tr"); if (!tr) return;
     const id = tr.dataset.id;
     if (e.target.closest(".save")) {
-      const payload = { updated_by: state.userName };
-      $all("[data-key]", tr).forEach(el => { payload[el.dataset.key] = el.type === "checkbox" ? el.checked : (el.value === "" ? null : el.value); });
-      const { error } = await sb.from("staff").update(payload).eq("id", id);
-      if (error) { alert("저장 실패: " + error.message); return; }
-      toast("저장되었습니다");
-      renderApp(main);
+      const failed = await saveRows([tr]);
+      if (failed.length) { alert("저장 실패: " + failed[0]); return; }
+      // 다른 줄에 저장 안 한 수정이 남아 있으면 화면을 다시 그리지 않음 (그 수정이 사라지지 않게)
+      const left = dirtyRows().length;
+      toast(left ? `저장되었습니다 · 저장 안 한 줄 ${left}개 남음` : "저장되었습니다");
+      if (!left) renderApp(main);
     }
     if (e.target.closest(".del")) {
       // 출퇴근 기록이 있는 알바는 삭제 불가 — 기록·정산 보존을 위해 "재직중" 해제로 대신함
@@ -299,6 +369,8 @@ async function renderApp(main) {
       const typed = prompt(`정말 삭제하려면 알바 이름을 똑같이 입력하세요: ${name}`);
       if (typed === null) return;
       if (typed.trim() !== name) { alert("이름이 일치하지 않아 삭제하지 않았습니다."); return; }
+      tr.classList.remove("dirty"); // 지울 줄의 수정은 저장할 필요 없음
+      if (!(await ensureSaved())) return;
       const { error } = await sb.from("staff").delete().eq("id", id);
       if (error) { alert("삭제 실패: " + error.message); return; }
       toast("삭제되었습니다");
@@ -308,24 +380,22 @@ async function renderApp(main) {
 
   const logsBody = $("#logsBody");
   if (logsBody) {
-    logsBody.addEventListener("input", (e) => { const tr = e.target.closest("tr"); if (tr) tr.classList.add("dirty"); });
+    logsBody.addEventListener("input", markDirty);
+    logsBody.addEventListener("change", markDirty);
     logsBody.addEventListener("click", async (e) => {
       const tr = e.target.closest("tr"); if (!tr) return;
       const id = tr.dataset.id;
       if (e.target.closest(".save")) {
-        const payload = { updated_by: state.userName };
-        $all("[data-key]", tr).forEach(el => {
-          let v = el.value === "" ? null : el.value;
-          if (v && (el.dataset.key === "clock_in" || el.dataset.key === "clock_out")) v = localInputToIso(v);
-          payload[el.dataset.key] = v;
-        });
-        const { error } = await sb.from("attendance_logs").update(payload).eq("id", id);
-        if (error) { alert("저장 실패: " + error.message); return; }
-        toast("저장되었습니다");
-        renderApp(main);
+        const failed = await saveRows([tr]);
+        if (failed.length) { alert("저장 실패: " + failed[0]); return; }
+        const left = dirtyRows().length;
+        toast(left ? `저장되었습니다 · 저장 안 한 줄 ${left}개 남음` : "저장되었습니다");
+        if (!left) renderApp(main);
       }
       if (e.target.closest(".del")) {
         if (!confirm("이 기록을 삭제할까요? (정산에서 빠지며, 아래 '삭제한 근태기록'에서 복원할 수 있습니다)")) return;
+        tr.classList.remove("dirty");
+        if (!(await ensureSaved())) return;
         const { error } = await sb.from("attendance_logs")
           .update({ deleted_at: new Date().toISOString(), deleted_by: state.userName }).eq("id", id);
         if (error) { alert("삭제 실패: " + error.message); return; }
@@ -340,6 +410,7 @@ async function renderApp(main) {
     deletedBody.addEventListener("click", async (e) => {
       if (!e.target.closest(".restore")) return;
       const id = e.target.closest("tr").dataset.id;
+      if (!(await ensureSaved())) return;
       const { error } = await sb.from("attendance_logs")
         .update({ deleted_at: null, deleted_by: null, updated_by: state.userName }).eq("id", id);
       if (error) { alert("복원 실패: " + error.message); return; }
