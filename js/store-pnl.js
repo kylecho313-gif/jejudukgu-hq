@@ -97,14 +97,45 @@ async function loadMonth() {
   state.pnl = pnl || null;
   state.sales = { cash: pnl?.sales_cash ?? 0, card: pnl?.sales_card ?? 0, delivery: pnl?.sales_delivery ?? 0 };
   state.removed = [];
+  let items = [];
   if (pnl) {
-    const { data: items } = await sb.from("store_pnl_items").select("*").eq("pnl_id", pnl.id).order("category").order("sort_order");
-    state.items = (items || []).map(i => ({ ...i }));
-  } else {
-    state.items = [];
+    const { data } = await sb.from("store_pnl_items").select("*").eq("pnl_id", pnl.id).order("category").order("sort_order");
+    items = data || [];
   }
+  state.items = buildRows(items);
   render();
   setDirty(false);
+}
+
+// 항목은 고정 목록으로 보여주고 금액만 입력받는다.
+// 고정 목록(store_pnl_presets) + 저장된 내역 중 목록에 없는 항목(과거 데이터) + 묶음별 "기타" 한 줄.
+function rowKey(r) { return [r.category, r.account || "", r.item || "", r.vendor || ""].join("|"); }
+
+function buildRows(savedItems) {
+  const saved = {};
+  for (const it of savedItems) saved[rowKey(it)] = it;
+  const rows = [];
+  const used = new Set();
+
+  for (const p of state.presets) {
+    const base = { category: p.category, account: p.account || "", item: p.item || "", vendor: p.vendor || "" };
+    const hit = saved[rowKey(base)];
+    if (hit) used.add(rowKey(base));
+    rows.push({ ...base, id: hit?.id, supply_amount: hit?.supply_amount ?? "", tax_amount: hit?.tax_amount ?? "", amount: hit?.amount ?? "" });
+  }
+  // 고정 목록에 없는 저장 내역(2025년 이관분 등)은 그대로 아래에 붙여 보여준다
+  for (const it of savedItems) {
+    if (used.has(rowKey(it))) continue;
+    rows.push({
+      category: it.category, account: it.account || "", item: it.item || "", vendor: it.vendor || "",
+      id: it.id, supply_amount: it.supply_amount ?? "", tax_amount: it.tax_amount ?? "", amount: it.amount ?? "", extra: true,
+    });
+  }
+  // 목록에 없는 지출을 적을 수 있도록 묶음마다 "기타" 한 줄 (거래처·비고만 직접 입력)
+  for (const c of CATEGORIES) {
+    rows.push({ category: c.key, account: "기타", item: "기타(직접 입력)", vendor: "", supply_amount: "", tax_amount: "", amount: "", freeVendor: true });
+  }
+  return rows;
 }
 
 // ---------- 계산 ----------
@@ -136,15 +167,19 @@ function summaryHtml() {
   </table>`;
 }
 
-function itemRowHtml(it, idx) {
-  return `<tr data-idx="${idx}">
-    <td><input type="text" data-key="account" value="${escapeHtml(it.account)}" list="accountList" placeholder="계정"></td>
-    <td><input type="text" data-key="item" value="${escapeHtml(it.item)}" list="itemList" placeholder="항목"></td>
-    <td><input type="text" data-key="vendor" value="${escapeHtml(it.vendor)}" list="vendorList" placeholder="거래처 및 비고"></td>
-    <td><input type="number" data-key="supply_amount" value="${it.supply_amount ?? ""}" placeholder="0"></td>
-    <td><input type="number" data-key="tax_amount" value="${it.tax_amount ?? ""}" placeholder="0"></td>
-    <td><input type="number" data-key="amount" value="${it.amount ?? ""}" placeholder="0"></td>
-    <td class="rowActions"><button class="iconBtn del" style="color:#b3261e">삭제</button></td>
+// 항목 이름은 고정(글자), 금액만 입력
+function itemRowHtml(it, idx, locked) {
+  const dis = locked ? "disabled" : "";
+  const vendorCell = it.freeVendor
+    ? `<input type="text" data-key="vendor" value="${escapeHtml(it.vendor)}" placeholder="직접 입력" ${dis}>`
+    : escapeHtml(it.vendor || "");
+  return `<tr data-idx="${idx}"${it.extra ? ' title="고정 목록에 없는 항목(과거 입력분)"' : ""}>
+    <td>${escapeHtml(it.account || "")}</td>
+    <td>${escapeHtml(it.item || "")}${it.extra ? ` <small style="color:var(--muted)">(추가분)</small>` : ""}</td>
+    <td>${vendorCell}</td>
+    <td><input type="number" data-key="supply_amount" value="${it.supply_amount ?? ""}" placeholder="0" ${dis}></td>
+    <td><input type="number" data-key="tax_amount" value="${it.tax_amount ?? ""}" placeholder="0" ${dis}></td>
+    <td><input type="number" data-key="amount" value="${it.amount ?? ""}" placeholder="0" ${dis}></td>
   </tr>`;
 }
 
@@ -169,6 +204,8 @@ function render() {
       <p style="color:var(--muted);font-size:12px;margin:0">
         상태: <strong>${escapeHtml(p.status || "작성 전")}</strong>
         ${p.updated_by ? ` · 마지막 수정 ${escapeHtml(p.updated_by)}` : ""}
+        · 항목은 고정입니다. 해당되는 줄에 금액만 넣으시면 되고, 없는 달은 비워두시면 됩니다.
+        목록에 없는 지출은 각 묶음 맨 아래 "기타" 줄에 내용을 적고 금액을 넣어주세요.
       </p>
     </div>
 
@@ -188,13 +225,13 @@ function render() {
       return `<div class="panel">
         <div class="toolbar">
           <h2 style="margin:0">${c.label} <small>${c.hint}</small></h2>
-          <div class="right"><strong id="catSum${ci}">${fmtNum(sum)}원</strong> ${locked ? "" : `<button class="iconBtn addRow" data-cat="${c.key}">+ 줄 추가</button>`}</div>
+          <div class="right"><strong id="catSum${ci}">${fmtNum(sum)}원</strong></div>
         </div>
         <div class="tableWrap"><table>
-          <colgroup><col style="width:150px"><col style="width:170px"><col><col style="width:120px"><col style="width:110px"><col style="width:130px"><col style="width:70px"></colgroup>
-          <thead><tr><th>계정</th><th>항목</th><th>거래처 및 비고</th><th>공급가</th><th>세액</th><th>합계금액</th><th>작업</th></tr></thead>
+          <colgroup><col style="width:150px"><col style="width:180px"><col><col style="width:120px"><col style="width:110px"><col style="width:130px"></colgroup>
+          <thead><tr><th>계정</th><th>항목</th><th>거래처 및 비고</th><th>공급가</th><th>세액</th><th>합계금액</th></tr></thead>
           <tbody class="itemsBody" data-cat="${c.key}">
-            ${rows.map(x => itemRowHtml(x.it, x.idx)).join("") || `<tr><td colspan="7" style="color:var(--muted)">입력된 내역이 없습니다. "+ 줄 추가"를 눌러주세요.</td></tr>`}
+            ${rows.map(x => itemRowHtml(x.it, x.idx, locked)).join("")}
           </tbody>
         </table></div>
       </div>`;
@@ -236,15 +273,6 @@ function bind(locked) {
   [["salesCash", "cash"], ["salesCard", "card"], ["salesDelivery", "delivery"]].forEach(([id, key]) => {
     $("#" + id).addEventListener("input", (e) => { state.sales[key] = e.target.value; setDirty(true); updateSummary(); });
   });
-  $all(".addRow").forEach(btn => btn.addEventListener("click", () => {
-    const cat = btn.dataset.cat;
-    const last = state.presets.filter(p => p.category === cat);
-    state.items.push({ category: cat, account: last[0]?.account || "", item: "", vendor: "", supply_amount: 0, tax_amount: 0, amount: 0, sort_order: state.items.length });
-    setDirty(true);
-    render();
-    const bodies = $all(`.itemsBody[data-cat="${cat}"] tr`);
-    bodies[bodies.length - 1]?.querySelector("[data-key=item]")?.focus();
-  }));
   $all(".itemsBody").forEach(body => {
     body.addEventListener("input", (e) => {
       const tr = e.target.closest("tr[data-idx]"); if (!tr) return;
@@ -257,17 +285,6 @@ function bind(locked) {
       }
       setDirty(true);
       updateSummary();
-    });
-    body.addEventListener("click", (e) => {
-      if (!e.target.closest(".del")) return;
-      const tr = e.target.closest("tr[data-idx]");
-      const idx = Number(tr.dataset.idx);
-      const it = state.items[idx];
-      if (num(it.amount) && !confirm("이 줄을 지울까요?")) return;
-      if (it.id) state.removed.push(it.id);
-      state.items.splice(idx, 1);
-      setDirty(true);
-      render();
     });
   });
   const submitBtn = $("#submitBtn");
@@ -310,12 +327,19 @@ async function saveAll() {
       if (delErr) throw delErr;
       state.removed = [];
     }
-    // 빈 줄은 저장하지 않음. 새 줄(id 없음)은 insert, 기존 줄은 update — id를 빈 값으로 보내면 오류가 남
+    // 금액이 0인 줄은 저장하지 않는다. 전에 저장됐다가 0으로 지운 줄은 DB에서도 지운다.
+    const cleared = state.items.filter(it => it.id && !num(it.amount) && !num(it.supply_amount) && !num(it.tax_amount));
+    if (cleared.length) {
+      const { error: clrErr } = await sb.from("store_pnl_items").delete().in("id", cleared.map(it => it.id));
+      if (clrErr) throw clrErr;
+      cleared.forEach(it => { delete it.id; });
+    }
+    // 새 줄(id 없음)은 insert, 기존 줄은 update — id를 빈 값으로 보내면 오류가 남
     const rows = state.items
-      .filter(it => num(it.amount) || (it.item || "").trim() || (it.vendor || "").trim())
+      .filter(it => num(it.amount) || num(it.supply_amount) || num(it.tax_amount))
       .map((it, i) => ({
         _id: it.id, pnl_id: saved.id, category: it.category,
-        account: it.account || null, item: it.item || null, vendor: it.vendor || null,
+        account: it.account || null, item: it.freeVendor ? "기타" : (it.item || null), vendor: it.vendor || null,
         supply_amount: num(it.supply_amount), tax_amount: num(it.tax_amount), amount: num(it.amount),
         sort_order: i, updated_by: state.userName, updated_at: new Date().toISOString(),
       }));
