@@ -73,6 +73,7 @@ async function startApp() {
   $("#loginScreen").style.display = "none";
   $("#app").style.display = "block";
   $("#userName").textContent = state.userName;
+  if (!state.isStore) $("#hqLink").style.display = "inline";   // 관리자만 본사 앱으로 돌아가는 링크
 
   const [{ data: stores, error }, { data: presets }] = await Promise.all([
     sb.from("stores").select("id,name,store_code").order("store_code"),
