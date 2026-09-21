@@ -20,6 +20,8 @@ const state = {
   storeId: localStorage.getItem("jdgpnl_store") || "",
   month: monthNow(),
   pnl: null,
+  editMode: false,
+  removedPresets: [],
   sales: { cash: 0, card: 0, delivery: 0 },
   items: [],      // 화면에서 편집 중인 줄들 (id가 없으면 새 줄)
   removed: [],    // 삭제한 기존 줄의 id
@@ -97,6 +99,7 @@ async function loadMonth() {
   state.pnl = pnl || null;
   state.sales = { cash: pnl?.sales_cash ?? 0, card: pnl?.sales_card ?? 0, delivery: pnl?.sales_delivery ?? 0 };
   state.removed = [];
+  state.removedPresets = [];
   let items = [];
   if (pnl) {
     const { data } = await sb.from("store_pnl_items").select("*").eq("pnl_id", pnl.id).order("category").order("sort_order");
@@ -121,7 +124,7 @@ function buildRows(savedItems) {
     const base = { category: p.category, account: p.account || "", item: p.item || "", vendor: p.vendor || "" };
     const hit = saved[rowKey(base)];
     if (hit) used.add(rowKey(base));
-    rows.push({ ...base, id: hit?.id, supply_amount: hit?.supply_amount ?? "", tax_amount: hit?.tax_amount ?? "", amount: hit?.amount ?? "" });
+    rows.push({ ...base, presetId: p.id, sort_order: p.sort_order ?? 0, id: hit?.id, supply_amount: hit?.supply_amount ?? "", tax_amount: hit?.tax_amount ?? "", amount: hit?.amount ?? "" });
   }
   // 고정 목록에 없는 저장 내역(2025년 이관분 등)은 그대로 아래에 붙여 보여준다
   for (const it of savedItems) {
@@ -167,19 +170,22 @@ function summaryHtml() {
   </table>`;
 }
 
-// 항목 이름은 고정(글자), 금액만 입력
+// 평소에는 항목 이름이 글자로 고정되고 금액만 입력. "항목 편집"을 켜면 이름도 고칠 수 있다.
 function itemRowHtml(it, idx, locked) {
   const dis = locked ? "disabled" : "";
-  const vendorCell = it.freeVendor
+  const edit = state.editMode && !locked;
+  const txt = (key, ph) => `<input type="text" data-key="${key}" value="${escapeHtml(it[key] || "")}" placeholder="${ph}">`;
+  const vendorCell = edit ? txt("vendor", "거래처") : (it.freeVendor
     ? `<input type="text" data-key="vendor" value="${escapeHtml(it.vendor)}" placeholder="직접 입력" ${dis}>`
-    : escapeHtml(it.vendor || "");
+    : escapeHtml(it.vendor || ""));
   return `<tr data-idx="${idx}"${it.extra ? ' title="고정 목록에 없는 항목(과거 입력분)"' : ""}>
-    <td>${escapeHtml(it.account || "")}</td>
-    <td>${escapeHtml(it.item || "")}${it.extra ? ` <small style="color:var(--muted)">(추가분)</small>` : ""}</td>
+    <td>${edit ? txt("account", "계정") : escapeHtml(it.account || "")}</td>
+    <td>${edit ? txt("item", "항목") : escapeHtml(it.item || "") + (it.extra ? ` <small style="color:var(--muted)">(추가분)</small>` : "")}</td>
     <td>${vendorCell}</td>
     <td><input type="number" data-key="supply_amount" value="${it.supply_amount ?? ""}" placeholder="0" ${dis}></td>
     <td><input type="number" data-key="tax_amount" value="${it.tax_amount ?? ""}" placeholder="0" ${dis}></td>
     <td><input type="number" data-key="amount" value="${it.amount ?? ""}" placeholder="0" ${dis}></td>
+    ${edit ? `<td class="rowActions"><button class="iconBtn delRow" style="color:#b3261e">삭제</button></td>` : ""}
   </tr>`;
 }
 
@@ -198,14 +204,19 @@ function render() {
         <div class="right">
           <select id="storeSel">${state.stores.map(s => `<option value="${s.id}" ${s.id === state.storeId ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}</select>
           <input type="month" id="monthSel" value="${state.month}">
+          ${locked ? "" : `<button class="iconBtn" id="editModeBtn">${state.editMode ? "항목 편집 끝내기" : "항목 편집"}</button>`}
           <button class="primary" id="saveAllBtn" disabled>변경사항 모두 저장</button>
         </div>
       </div>
       <p style="color:var(--muted);font-size:12px;margin:0">
         상태: <strong>${escapeHtml(p.status || "작성 전")}</strong>
         ${p.updated_by ? ` · 마지막 수정 ${escapeHtml(p.updated_by)}` : ""}
-        · 항목은 고정입니다. 해당되는 줄에 금액만 넣으시면 되고, 없는 달은 비워두시면 됩니다.
-        목록에 없는 지출은 각 묶음 맨 아래 "기타" 줄에 내용을 적고 금액을 넣어주세요.
+        ${state.editMode
+          ? `· <strong>항목 편집 중</strong> — 이름을 고치거나 줄을 추가·삭제할 수 있습니다.
+             바꾼 항목 목록은 <strong>모든 매장과 다음 달에도 함께 적용</strong>됩니다.
+             (이미 저장된 지난달 내역의 이름은 그대로 남습니다)`
+          : `· 항목은 고정입니다. 해당되는 줄에 금액만 넣으시면 되고, 없는 달은 비워두시면 됩니다.
+             항목 이름을 바꾸거나 줄을 늘리려면 위 "항목 편집"을 눌러주세요.`}
       </p>
     </div>
 
@@ -225,11 +236,12 @@ function render() {
       return `<div class="panel">
         <div class="toolbar">
           <h2 style="margin:0">${c.label} <small>${c.hint}</small></h2>
-          <div class="right"><strong id="catSum${ci}">${fmtNum(sum)}원</strong></div>
+          <div class="right"><strong id="catSum${ci}">${fmtNum(sum)}원</strong>
+            ${state.editMode && !locked ? ` <button class="iconBtn addRow" data-cat="${c.key}">+ 항목 추가</button>` : ""}</div>
         </div>
         <div class="tableWrap"><table>
-          <colgroup><col style="width:150px"><col style="width:180px"><col><col style="width:120px"><col style="width:110px"><col style="width:130px"></colgroup>
-          <thead><tr><th>계정</th><th>항목</th><th>거래처 및 비고</th><th>공급가</th><th>세액</th><th>합계금액</th></tr></thead>
+          <colgroup><col style="width:150px"><col style="width:180px"><col><col style="width:120px"><col style="width:110px"><col style="width:130px">${state.editMode && !locked ? `<col style="width:70px">` : ""}</colgroup>
+          <thead><tr><th>계정</th><th>항목</th><th>거래처 및 비고</th><th>공급가</th><th>세액</th><th>합계금액</th>${state.editMode && !locked ? "<th>작업</th>" : ""}</tr></thead>
           <tbody class="itemsBody" data-cat="${c.key}">
             ${rows.map(x => itemRowHtml(x.it, x.idx, locked)).join("")}
           </tbody>
@@ -273,11 +285,44 @@ function bind(locked) {
   [["salesCash", "cash"], ["salesCard", "card"], ["salesDelivery", "delivery"]].forEach(([id, key]) => {
     $("#" + id).addEventListener("input", (e) => { state.sales[key] = e.target.value; setDirty(true); updateSummary(); });
   });
+  const editBtn = $("#editModeBtn");
+  if (editBtn) editBtn.addEventListener("click", () => { state.editMode = !state.editMode; render(); });
+
+  $all(".addRow").forEach(btn => btn.addEventListener("click", () => {
+    const cat = btn.dataset.cat;
+    const sameCat = state.items.filter(r => r.category === cat);
+    state.items.push({
+      category: cat, account: sameCat[0]?.account || "", item: "", vendor: "",
+      supply_amount: "", tax_amount: "", amount: "", presetNew: true,
+      sort_order: (Math.max(0, ...sameCat.map(r => Number(r.sort_order) || 0)) + 1),
+    });
+    setDirty(true);
+    render();
+    const rows = $all(`.itemsBody[data-cat="${cat}"] tr`);
+    rows[rows.length - 1]?.querySelector("[data-key=item]")?.focus();
+  }));
+
   $all(".itemsBody").forEach(body => {
+    body.addEventListener("click", async (e) => {
+      if (!e.target.closest(".delRow")) return;
+      const tr = e.target.closest("tr[data-idx]");
+      const it = state.items[Number(tr.dataset.idx)];
+      const label = [it.item, it.vendor].filter(Boolean).join(" · ") || "이";
+      const msg = it.id
+        ? `"${label}" 항목을 목록에서 지울까요?\n이 달에 입력된 금액도 함께 지워집니다. (지난달 내역은 그대로 남습니다)`
+        : `"${label}" 항목을 목록에서 지울까요?`;
+      if (!confirm(msg)) return;
+      if (it.id) state.removed.push(it.id);
+      if (it.presetId) state.removedPresets.push(it.presetId);
+      state.items.splice(Number(tr.dataset.idx), 1);
+      setDirty(true);
+      render();
+    });
     body.addEventListener("input", (e) => {
       const tr = e.target.closest("tr[data-idx]"); if (!tr) return;
       const it = state.items[Number(tr.dataset.idx)];
       it[e.target.dataset.key] = e.target.value;
+      if (["account", "item", "vendor"].includes(e.target.dataset.key) && !it.freeVendor) it.presetChanged = true;
       // 공급가와 세액을 넣으면 합계금액을 자동 계산 (합계금액을 직접 고치면 그 값을 그대로 둠)
       if (e.target.dataset.key === "supply_amount" || e.target.dataset.key === "tax_amount") {
         const auto = num(it.supply_amount) + num(it.tax_amount);
@@ -300,6 +345,36 @@ function updateSummary() {
   });
   const box = $("#summaryBox");
   if (box) box.innerHTML = summaryHtml();
+}
+
+// 항목 목록(store_pnl_presets) 변경분 저장 — 이름 수정 / 추가 / 삭제
+// 목록은 모든 매장이 함께 쓰므로, 이미 저장된 과거 내역의 이름은 건드리지 않는다.
+async function savePresets() {
+  if (state.removedPresets.length) {
+    const { error } = await sb.from("store_pnl_presets").delete().in("id", state.removedPresets);
+    if (error) throw error;
+    state.removedPresets = [];
+  }
+  const changed = state.items.filter(it => it.presetId && it.presetChanged);
+  for (const it of changed) {
+    const { error } = await sb.from("store_pnl_presets")
+      .update({ account: it.account || null, item: it.item || null, vendor: it.vendor || null })
+      .eq("id", it.presetId);
+    if (error) throw error;
+    it.presetChanged = false;
+  }
+  const added = state.items.filter(it => it.presetNew && ((it.item || "").trim() || (it.vendor || "").trim()));
+  if (added.length) {
+    const { error } = await sb.from("store_pnl_presets").insert(added.map(it => ({
+      category: it.category, account: it.account || null, item: it.item || null,
+      vendor: it.vendor || null, sort_order: Number(it.sort_order) || 0,
+    })));
+    if (error) throw error;
+  }
+  if (state.removedPresets.length || changed.length || added.length) {
+    const { data } = await sb.from("store_pnl_presets").select("*").order("category").order("sort_order");
+    state.presets = data || [];
+  }
 }
 
 // ---------- 저장 ----------
@@ -327,6 +402,7 @@ async function saveAll() {
       if (delErr) throw delErr;
       state.removed = [];
     }
+    await savePresets();
     // 금액이 0인 줄은 저장하지 않는다. 전에 저장됐다가 0으로 지운 줄은 DB에서도 지운다.
     const cleared = state.items.filter(it => it.id && !num(it.amount) && !num(it.supply_amount) && !num(it.tax_amount));
     if (cleared.length) {
