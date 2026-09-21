@@ -75,7 +75,7 @@ function isoWeekMonday(dateStr) {
   d.setDate(d.getDate() - day);
   return ymd(d);
 }
-function computeSettlement(logs, hourlyWage, monthStr) {
+function computeSettlement(logs, hourlyWage, monthStr, giveAllowance = true) {
   const weekTotals = {};
   let monthHours = 0;
   const monthDays = new Set();
@@ -89,7 +89,7 @@ function computeSettlement(logs, hourlyWage, monthStr) {
   }
   let weeklyAllowance = 0;
   for (const [monday, hrs] of Object.entries(weekTotals)) {
-    if (monday.startsWith(monthStr) && hrs >= 15) weeklyAllowance += Math.min(hrs, 40) / 40 * 8 * hourlyWage;
+    if (giveAllowance && monday.startsWith(monthStr) && hrs >= 15) weeklyAllowance += Math.min(hrs, 40) / 40 * 8 * hourlyWage;
   }
   const basePay = monthHours * hourlyWage;
   return {
@@ -102,10 +102,12 @@ function computeSettlement(logs, hourlyWage, monthStr) {
 }
 function staffRowHtml(s) {
   const wh3 = s.withhold_3_3 !== false;
+  const wa = s.weekly_allowance !== false;
   return `<tr data-id="${s.id}">
     <td><input type="text" data-key="name" value="${escapeHtml(s.name)}"></td>
     <td><input type="text" maxlength="4" inputmode="numeric" data-key="pin" value="${escapeHtml(s.pin)}"></td>
     <td><input type="number" data-key="hourly_wage" value="${s.hourly_wage ?? 0}"></td>
+    <td style="text-align:center"><input type="checkbox" data-key="weekly_allowance" ${wa ? "checked" : ""}></td>
     <td style="text-align:center"><input type="checkbox" data-key="withhold_3_3" ${wh3 ? "checked" : ""}></td>
     <td style="text-align:center"><input type="checkbox" data-key="active" ${s.active ? "checked" : ""}></td>
     <td><input type="text" data-key="notes" value="${escapeHtml(s.notes)}"></td>
@@ -166,13 +168,13 @@ async function renderApp(main) {
   let settleRows = "", totalBase = 0, totalAllow = 0, totalPay = 0, totalHours = 0, totalWithhold = 0, totalNet = 0;
   for (const s of staffList) {
     const logs = rangeLogs.filter(l => l.staff_id === s.id);
-    const r = computeSettlement(logs, Number(s.hourly_wage) || 0, monthStr);
+    const r = computeSettlement(logs, Number(s.hourly_wage) || 0, monthStr, s.weekly_allowance !== false);
     const wh3 = s.withhold_3_3 !== false;
     const withholdAmt = wh3 ? Math.round(r.total * 0.033) : 0;
     const netPay = r.total - withholdAmt;
     totalBase += r.basePay; totalAllow += r.weeklyAllowance; totalPay += r.total; totalHours += r.hours;
     totalWithhold += withholdAmt; totalNet += netPay;
-    settleRows += `<tr><td>${escapeHtml(s.name)}</td><td>${r.days}일</td><td>${r.hours.toFixed(1)}시간</td><td>${fmtNum(r.basePay)}원</td><td>${fmtNum(r.weeklyAllowance)}원</td><td>${fmtNum(r.total)}원</td><td>${wh3 ? "-" + fmtNum(withholdAmt) + "원" : "미적용"}</td><td><strong>${fmtNum(netPay)}원</strong></td></tr>`;
+    settleRows += `<tr><td>${escapeHtml(s.name)}</td><td>${r.days}일</td><td>${r.hours.toFixed(1)}시간</td><td>${fmtNum(r.basePay)}원</td><td>${s.weekly_allowance === false ? "미지급" : fmtNum(r.weeklyAllowance) + "원"}</td><td>${fmtNum(r.total)}원</td><td>${wh3 ? "-" + fmtNum(withholdAmt) + "원" : "미적용"}</td><td><strong>${fmtNum(netPay)}원</strong></td></tr>`;
   }
   if (!staffList.length) settleRows = `<tr><td colspan="8" style="color:var(--muted)">등록된 알바가 없습니다.</td></tr>`;
 
@@ -184,8 +186,8 @@ async function renderApp(main) {
       </div>
       <div class="tableWrap">
       <table>
-        <colgroup><col style="width:140px"><col style="width:110px"><col style="width:120px"><col style="width:80px"><col style="width:80px"><col><col style="width:100px"></colgroup>
-        <thead><tr><th>이름</th><th>PIN(4자리)</th><th>시급(원)</th><th>3.3% 공제</th><th>재직중</th><th>메모</th><th>작업</th></tr></thead>
+        <colgroup><col style="width:140px"><col style="width:110px"><col style="width:120px"><col style="width:80px"><col style="width:80px"><col style="width:80px"><col><col style="width:100px"></colgroup>
+        <thead><tr><th>이름</th><th>PIN(4자리)</th><th>시급(원)</th><th>주휴수당</th><th>3.3% 공제</th><th>재직중</th><th>메모</th><th>작업</th></tr></thead>
         <tbody id="staffBody">${(staffList || []).map(staffRowHtml).join("")}</tbody>
       </table>
       </div>
@@ -228,7 +230,8 @@ async function renderApp(main) {
     <div class="panel">
       <h2 style="margin:0 0 4px">월별 정산 · ${monthStr}</h2>
       <p style="color:var(--muted);font-size:12px;margin:0 0 12px">
-        기본급 = 시급 × 근무시간. 주휴수당(추정)은 해당 주(월~일요일) 실근무시간이 15시간 이상일 때
+        기본급 = 시급 × 근무시간. 알바 명단에서 "주휴수당"을 끈 알바는 주휴수당 없이 기본급만 계산합니다.
+        주휴수당(추정)은 해당 주(월~일요일) 실근무시간이 15시간 이상일 때
         (주 근무시간 ÷ 40시간, 최대 1) × 8 × 시급 으로 간이 계산한 값이며, 결근 여부는 반영하지 못합니다.
         3.3% 공제는 (기본급+주휴수당) 합계에 사업소득 원천징수 3.3%를 적용한 금액이며, 알바 명단에서 알바별로 켜고 끌 수 있습니다.
         정확한 지급액·세무 처리는 세무사·노무사 확인을 권장합니다. 퇴근 처리가 안 된 기록은 위 근태기록에서 퇴근시각을 채운 뒤 다시 계산됩니다.
