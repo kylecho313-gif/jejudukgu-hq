@@ -54,8 +54,14 @@ function setDirty(v) {
 
 // ---------- 로그인 (관리자 개별 로그인, js/auth.js — 본사 앱과 세션 공유) ----------
 // 가맹점 계정별로 자기 매장만 보이게 하는 작업은 다음 단계에서 추가한다.
+// 관리자는 모든 매장을 골라 볼 수 있고, 가맹점 계정은 자기 매장으로 고정된다(DB에서도 자기 매장만 보임)
 function initLogin() {
-  initAdminLogin(sb, (name) => { state.userName = name; startApp(); });
+  initAdminLogin(sb, (name, email, profile) => {
+    state.userName = name;
+    state.isStore = profile.role === "store";
+    if (state.isStore) state.storeId = profile.storeId;
+    startApp();
+  }, ["admin", "store"]);
 }
 function logout() {
   if (state.dirty && !confirm("저장하지 않은 입력이 있습니다. 로그아웃할까요?")) return;
@@ -75,7 +81,11 @@ async function startApp() {
   if (error) { $("#mainContent").innerHTML = `<div class="panel">매장 목록을 불러오지 못했습니다: ${escapeHtml(error.message)}</div>`; return; }
   state.stores = stores || [];
   state.presets = presets || [];
-  if (!state.storeId && state.stores.length) state.storeId = state.stores[0].id;
+  if (state.isStore && !state.stores.some(x => x.id === state.storeId)) {
+    $("#mainContent").innerHTML = `<div class="panel">이 계정에 연결된 매장이 없습니다. 본사에 문의해주세요.</div>`;
+    return;
+  }
+  if (!state.storeId || !state.stores.some(x => x.id === state.storeId)) state.storeId = state.stores[0]?.id;
   await loadMonth();
 }
 
@@ -190,9 +200,11 @@ function render() {
           <small>${locked ? "본사 확인완료 — 수정하려면 본사에 문의해주세요" : "입력 후 아래 '변경사항 모두 저장'을 눌러주세요"}</small>
         </h2>
         <div class="right">
-          <select id="storeSel">${state.stores.map(s => `<option value="${s.id}" ${s.id === state.storeId ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}</select>
+          ${state.isStore
+            ? `<strong style="margin-right:8px">${escapeHtml(state.stores.find(x => x.id === state.storeId)?.name || "")}</strong>`
+            : `<select id="storeSel">${state.stores.map(s => `<option value="${s.id}" ${s.id === state.storeId ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}</select>`}
           <input type="month" id="monthSel" value="${state.month}">
-          ${locked ? "" : `<button class="iconBtn" id="editModeBtn">${state.editMode ? "항목 편집 끝내기" : "항목 편집"}</button>`}
+          ${locked || state.isStore ? "" : `<button class="iconBtn" id="editModeBtn">${state.editMode ? "항목 편집 끝내기" : "항목 편집"}</button>`}
           <button class="primary" id="saveAllBtn" disabled>변경사항 모두 저장</button>
         </div>
       </div>
@@ -254,7 +266,7 @@ function render() {
 }
 
 function bind(locked) {
-  $("#storeSel").addEventListener("change", async (e) => {
+  $("#storeSel")?.addEventListener("change", async (e) => {
     if (state.dirty && !confirm("저장하지 않은 입력이 있습니다. 매장을 바꾸면 사라집니다. 계속할까요?")) { e.target.value = state.storeId; return; }
     state.storeId = e.target.value;
     localStorage.setItem("jdgpnl_store", state.storeId);

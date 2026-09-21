@@ -1183,7 +1183,11 @@ async function renderStorePnl(main) {
     entered++;
     tSales += r.sales; tExpense += r.expense; tProfit += r.profit;
     for (const c of PNL_CATS) tCat[c] += r.byCat[c];
-    const badge = h.status === "확인완료" ? "확인완료" : (h.status === "제출" ? "제출" : "작성중");
+    const badge = h.status === "확인완료"
+      ? `확인완료<br><button class="iconBtn pnlUnlock" data-id="${h.id}" style="font-size:11px">잠금 해제</button>`
+      : (h.status === "제출"
+        ? `<b>제출</b><br><button class="iconBtn pnlConfirm" data-id="${h.id}" style="font-size:11px">확인완료</button>`
+        : `작성중<br><button class="iconBtn pnlConfirm" data-id="${h.id}" style="font-size:11px">확인완료</button>`);
     return `<tr>
       <td>${escapeHtml(st.name)}</td>
       <td>${fmtNum(r.sales)}</td>
@@ -1216,7 +1220,7 @@ async function renderStorePnl(main) {
         ${kpi("평균 순수익율", pnlPct(tProfit, tSales))}
       </div>
       <div class="tableWrap"><table style="table-layout:fixed">
-        <colgroup><col style="width:120px"><col style="width:110px"><col style="width:110px"><col style="width:110px"><col style="width:100px"><col style="width:100px"><col style="width:100px"><col style="width:110px"><col style="width:120px"><col style="width:80px"></colgroup>
+        <colgroup><col style="width:120px"><col style="width:110px"><col style="width:110px"><col style="width:110px"><col style="width:100px"><col style="width:100px"><col style="width:100px"><col style="width:110px"><col style="width:120px"><col style="width:90px"></colgroup>
         <thead><tr><th>매장</th><th>매출</th><th>식자재</th><th>인건비</th><th>고정비</th><th>공과금·운영비</th><th>세금·4대보험</th><th>지출 합계</th><th>순수익</th><th>상태</th></tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table></div>
@@ -1232,6 +1236,21 @@ async function renderStorePnl(main) {
   `;
 
   bindMonthPicker(main, () => renderStorePnl(main));
+  // 확인완료 = 가맹점이 더 이상 고칠 수 없게 잠금 (DB 정책으로도 막힘)
+  main.querySelector(".tableWrap").addEventListener("click", async (e) => {
+    const c = e.target.closest(".pnlConfirm"), u = e.target.closest(".pnlUnlock");
+    if (!c && !u) return;
+    const id = (c || u).dataset.id;
+    const msg = c ? "이 달 손익을 확인완료로 잠글까요? 가맹점은 더 이상 수정할 수 없습니다."
+                  : "잠금을 풀까요? 가맹점이 다시 수정할 수 있게 됩니다.";
+    if (!confirm(msg)) return;
+    const patch = c ? { status: "확인완료", confirmed_by: state.userName, confirmed_at: new Date().toISOString() }
+                    : { status: "제출", confirmed_by: null, confirmed_at: null };
+    const { error } = await sb.from("store_pnl").update({ ...patch, updated_by: state.userName }).eq("id", id);
+    if (error) { alert("처리 실패: " + error.message); return; }
+    toast(c ? "확인완료로 잠갔습니다" : "잠금을 풀었습니다");
+    renderStorePnl(main);
+  });
   $("#pnlXlsxBtn").addEventListener("click", () => exportStorePnlXlsx(month, headers || [], itemsByPnl));
   $("#pnlTrendStore").addEventListener("change", (e) => renderPnlTrend(e.target.value));
   if (state.stores.length) renderPnlTrend(state.stores[0].id);
@@ -1296,7 +1315,7 @@ function exportStorePnlXlsx(month, headers, itemsByPnl) {
 
 // ---------- 13 계정 관리 (db/migration_10_account_admin.sql) ----------
 // 관리자만 쓸 수 있는 DB 함수(admin_*)로 계정을 만들고 권한을 준다. Supabase 대시보드에 들어갈 필요 없음.
-const ROLE_LABEL = { admin: "관리자", reader: "조회 전용" };
+const ROLE_LABEL = { admin: "관리자", reader: "조회 전용", store: "가맹점" };
 
 async function renderAccounts(main) {
   const { data: rows, error } = await sb.rpc("admin_list_accounts");
@@ -1307,10 +1326,16 @@ async function renderAccounts(main) {
   }
   const { data: { session } } = await sb.auth.getSession();
   const me = session?.user?.id;
+  await loadStores();
+  const storeSelect = (sid, disabled) => `<select data-key="store" ${disabled ? "disabled" : ""}>
+      <option value="">- 매장 선택 -</option>
+      ${state.stores.map(st => `<option value="${st.id}" ${st.id === sid ? "selected" : ""}>${escapeHtml(st.name)}</option>`).join("")}
+    </select>`;
   const fmtDate = (v) => v ? new Date(v).toLocaleString("ko-KR", { year: "2-digit", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "-";
   const roleSelect = (r, disabled) => `<select data-key="role" ${disabled ? "disabled" : ""}>
       <option value="admin" ${r === "admin" ? "selected" : ""}>관리자</option>
       <option value="reader" ${r === "reader" ? "selected" : ""}>조회 전용</option>
+      <option value="store" ${r === "store" ? "selected" : ""}>가맹점</option>
       <option value="" ${!r ? "selected" : ""}>접근 없음</option>
     </select>`;
 
@@ -1321,12 +1346,13 @@ async function renderAccounts(main) {
         <div class="right"><button class="primary" id="accSaveAllBtn" disabled>변경사항 모두 저장</button></div>
       </div>
       <div class="tableWrap"><table>
-        <colgroup><col style="width:230px"><col style="width:150px"><col style="width:130px"><col style="width:150px"><col></colgroup>
-        <thead><tr><th>이메일(아이디)</th><th>이름</th><th>권한</th><th>마지막 로그인</th><th>작업</th></tr></thead>
+        <colgroup><col style="width:220px"><col style="width:130px"><col style="width:120px"><col style="width:140px"><col style="width:140px"><col></colgroup>
+        <thead><tr><th>이메일(아이디)</th><th>이름</th><th>권한</th><th>매장 (가맹점만)</th><th>마지막 로그인</th><th>작업</th></tr></thead>
         <tbody id="accBody">${(rows || []).map(r => `<tr data-id="${r.user_id}">
           <td>${escapeHtml(r.email)}${r.user_id === me ? ' <small style="color:var(--muted)">(나)</small>' : ""}</td>
           <td><input type="text" data-key="name" value="${escapeHtml(r.display_name || "")}"></td>
           <td>${roleSelect(r.role, r.user_id === me)}</td>
+          <td>${storeSelect(r.store_id, r.role !== "store")}</td>
           <td>${fmtDate(r.last_sign_in_at)}</td>
           <td class="rowActions">
             <button class="iconBtn pwBtn">비밀번호 재설정</button>
@@ -1336,6 +1362,7 @@ async function renderAccounts(main) {
       </table></div>
       <p style="color:var(--muted);font-size:12px;margin-top:8px">
         <b>관리자</b>: 본사 앱·알바관리·가맹점 손익 모두 사용 · <b>조회 전용</b>: 보기만 가능(자동 백업 계정용) ·
+        <b>가맹점</b>: 지정한 매장의 손익 입력 화면만 사용(다른 매장·본사 자료는 보이지 않음) ·
         <b>접근 없음</b>: 로그인은 되지만 데이터를 볼 수 없음. 자기 자신의 권한은 바꿀 수 없습니다.
       </p>
     </div>
@@ -1346,7 +1373,8 @@ async function renderAccounts(main) {
         <div><label>이메일 (로그인 아이디)</label><input id="newEmail" type="email" placeholder="예: manager@jejudukgu.kr" autocomplete="off"></div>
         <div><label>이름</label><input id="newName" type="text" placeholder="예: 홍길동"></div>
         <div><label>처음 비밀번호 (8자 이상)</label><input id="newPw" type="text" autocomplete="off" placeholder="본인에게 알려줄 비밀번호"></div>
-        <div><label>권한</label><select id="newRole"><option value="admin">관리자</option><option value="reader">조회 전용</option></select></div>
+        <div><label>권한</label><select id="newRole"><option value="store">가맹점</option><option value="admin">관리자</option><option value="reader">조회 전용</option></select></div>
+        <div><label>매장 (가맹점일 때)</label><select id="newStore"><option value="">- 매장 선택 -</option>${state.stores.map(st => `<option value="${st.id}">${escapeHtml(st.name)}</option>`).join("")}</select></div>
       </div>
       <div style="margin-top:12px"><button class="primary" id="accCreateBtn">계정 만들기</button></div>
       <p style="color:var(--muted);font-size:12px;margin-top:8px">
@@ -1363,7 +1391,11 @@ async function renderAccounts(main) {
     saveAllBtn.disabled = n === 0;
     saveAllBtn.textContent = n ? `변경사항 모두 저장 (${n}명)` : "변경사항 모두 저장";
   };
-  const markDirty = (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) { tr.classList.add("dirty"); refresh(); } };
+  const markDirty = (e) => {
+    const tr = e.target.closest("tr[data-id]"); if (!tr) return;
+    if (e.target.dataset.key === "role") tr.querySelector("[data-key=store]").disabled = e.target.value !== "store";
+    tr.classList.add("dirty"); refresh();
+  };
   body.addEventListener("input", markDirty);
   body.addEventListener("change", markDirty);
 
@@ -1373,7 +1405,8 @@ async function renderAccounts(main) {
     for (const tr of trs) {
       const role = tr.querySelector("[data-key=role]").value || null;
       const name = tr.querySelector("[data-key=name]").value;
-      const { error } = await sb.rpc("admin_update_account", { p_user_id: tr.dataset.id, p_name: name, p_role: role });
+      const storeId = role === "store" ? (tr.querySelector("[data-key=store]").value || null) : null;
+      const { error } = await sb.rpc("admin_update_account", { p_user_id: tr.dataset.id, p_name: name, p_role: role, p_store_id: storeId });
       if (error) failed.push(`${tr.cells[0].textContent}: ${error.message}`);
       else tr.classList.remove("dirty");
     }
@@ -1406,13 +1439,17 @@ async function renderAccounts(main) {
 
   $("#accCreateBtn").addEventListener("click", async (e) => {
     const email = $("#newEmail").value.trim(), name = $("#newName").value.trim(), pw = $("#newPw").value, role = $("#newRole").value;
+    const storeId = role === "store" ? ($("#newStore").value || null) : null;
     if (!email || !pw) { alert("이메일과 비밀번호를 입력해주세요."); return; }
+    if (role === "store" && !storeId) { alert("가맹점 계정은 매장을 선택해주세요."); return; }
     if ($all("#accBody tr.dirty").length && !confirm("저장하지 않은 변경이 있습니다. 계정을 만들면 화면을 새로 불러와 그 변경은 사라집니다. 계속할까요?")) return;
     e.currentTarget.disabled = true;
-    const { error } = await sb.rpc("admin_create_account", { p_email: email, p_password: pw, p_name: name, p_role: role });
+    const { error } = await sb.rpc("admin_create_account", { p_email: email, p_password: pw, p_name: name, p_role: role, p_store_id: storeId });
     e.currentTarget.disabled = false;
     if (error) { alert("만들기 실패: " + error.message); return; }
-    alert(`계정을 만들었습니다.\n아이디: ${email}\n비밀번호: 방금 입력한 값\n본인에게 알려주세요.`);
+    alert(role === "store"
+      ? `가맹점 계정을 만들었습니다.\n아이디: ${email}\n비밀번호: 방금 입력한 값\n접속 주소: ${location.origin}${location.pathname.replace(/[^/]*$/, "")}store-pnl.html\n점주님께 알려주세요.`
+      : `계정을 만들었습니다.\n아이디: ${email}\n비밀번호: 방금 입력한 값\n본인에게 알려주세요.`);
     renderAccounts(main);
   });
 }
