@@ -13,7 +13,7 @@ begin
   foreach t in array array[
     'stores', 'sales_royalty', 'issues', 'weekly_reports', 'monthly_narrative', 'new_store_openings',
     'manager_tasks', 'franchise_inquiries', 'supply_margin', 'alert_settings', 'dropdown_options',
-    'staff', 'attendance_logs', 'data_history'
+    'staff', 'attendance_logs', 'data_history', 'store_pnl', 'store_pnl_items', 'store_pnl_presets'
   ] loop
     execute format('drop policy if exists "anon full access" on %I', t);
     execute format('revoke select, insert, update, delete, truncate on %I from anon', t);
@@ -24,3 +24,5 @@ drop policy if exists "anon select" on attendance_logs;
 drop policy if exists "anon insert" on attendance_logs;
 drop policy if exists "anon update" on attendance_logs;
 drop policy if exists "anon read" on data_history;
+drop policy if exists "anon read" on store_pnl_presets;
+drop policy if exists "anon write presets" on store_pnl_presets;

@@ -7,7 +7,8 @@ declare t text;
 begin
   foreach t in array array[
     'stores', 'sales_royalty', 'issues', 'weekly_reports', 'monthly_narrative', 'new_store_openings',
-    'manager_tasks', 'franchise_inquiries', 'supply_margin', 'alert_settings', 'dropdown_options', 'staff'
+    'manager_tasks', 'franchise_inquiries', 'supply_margin', 'alert_settings', 'dropdown_options', 'staff',
+    'store_pnl', 'store_pnl_items', 'store_pnl_presets'
   ] loop
     execute format('grant select, insert, update, delete on %I to anon', t);
     execute format('drop policy if exists "anon full access" on %I', t);
