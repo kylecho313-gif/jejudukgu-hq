@@ -52,27 +52,15 @@ function setDirty(v) {
   window.onbeforeunload = v ? () => "저장하지 않은 입력이 있습니다." : null;
 }
 
-// ---------- 로그인 (본사 앱과 같은 공유 비밀번호 — 개별 로그인 적용 시 교체) ----------
+// ---------- 로그인 (관리자 개별 로그인, js/auth.js — 본사 앱과 세션 공유) ----------
+// 가맹점 계정별로 자기 매장만 보이게 하는 작업은 다음 단계에서 추가한다.
 function initLogin() {
-  const authed = localStorage.getItem("jdgpnl_authed") === "true";
-  if (authed && state.userName) { startApp(); return; }
-  $("#loginScreen").style.display = "flex";
-  $("#loginForm").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const name = $("#loginName").value.trim();
-    if (!name) { $("#loginErr").textContent = "이름을 입력해주세요."; return; }
-    if ($("#loginPw").value !== CONFIG.APP_PASSWORD) { $("#loginErr").textContent = "비밀번호가 올바르지 않습니다."; return; }
-    localStorage.setItem("jdgpnl_authed", "true");
-    localStorage.setItem("jdgpnl_name", name);
-    state.userName = name;
-    startApp();
-  });
+  initAdminLogin(sb, (name) => { state.userName = name; startApp(); });
 }
 function logout() {
   if (state.dirty && !confirm("저장하지 않은 입력이 있습니다. 로그아웃할까요?")) return;
-  localStorage.removeItem("jdgpnl_authed");
   window.onbeforeunload = null;
-  location.reload();
+  adminLogout(sb);
 }
 
 async function startApp() {

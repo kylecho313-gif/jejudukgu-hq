@@ -5,7 +5,7 @@ const STORE_CODE = "S001"; // 하남 본점
 
 const state = {
   storeId: null,
-  userName: localStorage.getItem("jdgstaff_name") || "",
+  userName: "",
   currentMonth: monthNow(),
 };
 
@@ -49,26 +49,11 @@ function bindMonthPicker(root, onChange) {
 }
 
 // ---------- 로그인 ----------
+// 관리자 개별 로그인 (js/auth.js) — 본사 통합관리 앱과 로그인 공유
 function initLogin() {
-  const authed = localStorage.getItem("jdgstaff_authed") === "true";
-  if (authed && state.userName) { startApp(); return; }
-  $("#loginScreen").style.display = "flex";
-  $("#loginForm").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const pw = $("#loginPw").value;
-    const name = $("#loginName").value.trim();
-    if (!name) { $("#loginErr").textContent = "이름을 입력해주세요."; return; }
-    if (pw !== CONFIG.APP_PASSWORD) { $("#loginErr").textContent = "비밀번호가 올바르지 않습니다."; return; }
-    localStorage.setItem("jdgstaff_authed", "true");
-    localStorage.setItem("jdgstaff_name", name);
-    state.userName = name;
-    startApp();
-  });
+  initAdminLogin(sb, (name) => { state.userName = name; startApp(); });
 }
-function logout() {
-  localStorage.removeItem("jdgstaff_authed");
-  location.reload();
-}
+function logout() { adminLogout(sb); }
 async function startApp() {
   $("#loginScreen").style.display = "none";
   $("#app").style.display = "block";
