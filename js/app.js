@@ -130,6 +130,7 @@ const TABS = [
   { id: "leads", label: "가맹문의", render: renderFranchiseInquiries },
   { id: "logistics", label: "물류마진", render: renderLogistics },
   { id: "pnl", label: "매장손익", render: renderPnl },
+  { id: "storepnl", label: "가맹점 손익", render: renderStorePnl },
   { id: "settings", label: "설정", render: renderSettings },
 ];
 function buildTabs() {
@@ -1142,6 +1143,165 @@ async function renderDropdownEditor() {
       await renderDropdownEditor();
     }
   }, { once: true });
+}
+
+// ---------- 12 가맹점 손익 (가맹점이 store-pnl.html에서 입력한 월별 손익 분석) ----------
+const PNL_CATS = ["고정비", "식자재", "공과금운영비", "세금보험", "인건비"];
+const PNL_CAT_LABEL = { 고정비: "고정비", 식자재: "식자재", 공과금운영비: "공과금·운영비", 세금보험: "세금·4대보험", 인건비: "인건비" };
+
+function pnlPct(part, whole) { return whole > 0 ? (part / whole * 100).toFixed(1) + "%" : "-"; }
+
+// 매장별 월 손익 한 줄 계산
+function pnlSummarize(header, items) {
+  const sales = (Number(header.sales_cash) || 0) + (Number(header.sales_card) || 0) + (Number(header.sales_delivery) || 0);
+  const byCat = {};
+  for (const c of PNL_CATS) byCat[c] = 0;
+  for (const it of items) byCat[it.category] = (byCat[it.category] || 0) + (Number(it.amount) || 0);
+  const expense = PNL_CATS.reduce((a, c) => a + byCat[c], 0);
+  return { sales, byCat, expense, profit: sales - expense };
+}
+
+async function renderStorePnl(main) {
+  await loadStores();
+  const month = state.currentMonth;
+  const { data: headers, error } = await sb.from("store_pnl").select("*").eq("month", month);
+  if (error) {
+    main.innerHTML = `<div class="panel">가맹점 손익을 불러오지 못했습니다: ${escapeHtml(error.message)}
+      <p style="color:var(--muted);font-size:12px;margin:4px 0 0">db/migration_09_store_pnl.sql을 Supabase SQL Editor에서 먼저 실행해주세요.</p></div>`;
+    return;
+  }
+  const ids = (headers || []).map(h => h.id);
+  let items = [];
+  if (ids.length) {
+    const { data } = await sb.from("store_pnl_items").select("*").in("pnl_id", ids);
+    items = data || [];
+  }
+  const itemsByPnl = {};
+  for (const it of items) (itemsByPnl[it.pnl_id] = itemsByPnl[it.pnl_id] || []).push(it);
+  const headerByStore = {};
+  for (const h of headers || []) headerByStore[h.store_id] = h;
+
+  let tSales = 0, tExpense = 0, tProfit = 0, entered = 0;
+  const tCat = {}; for (const c of PNL_CATS) tCat[c] = 0;
+
+  const rowsHtml = state.stores.map(st => {
+    const h = headerByStore[st.id];
+    if (!h) {
+      return `<tr><td>${escapeHtml(st.name)}</td><td colspan="9" style="color:var(--muted)">미입력</td></tr>`;
+    }
+    const r = pnlSummarize(h, itemsByPnl[h.id] || []);
+    entered++;
+    tSales += r.sales; tExpense += r.expense; tProfit += r.profit;
+    for (const c of PNL_CATS) tCat[c] += r.byCat[c];
+    const badge = h.status === "확인완료" ? "확인완료" : (h.status === "제출" ? "제출" : "작성중");
+    return `<tr>
+      <td>${escapeHtml(st.name)}</td>
+      <td>${fmtNum(r.sales)}</td>
+      <td>${fmtNum(r.byCat["식자재"])}<br><small style="color:var(--muted)">${pnlPct(r.byCat["식자재"], r.sales)}</small></td>
+      <td>${fmtNum(r.byCat["인건비"])}<br><small style="color:var(--muted)">${pnlPct(r.byCat["인건비"], r.sales)}</small></td>
+      <td>${fmtNum(r.byCat["고정비"])}</td>
+      <td>${fmtNum(r.byCat["공과금운영비"])}</td>
+      <td>${fmtNum(r.byCat["세금보험"])}</td>
+      <td>${fmtNum(r.expense)}</td>
+      <td><b style="color:${r.profit < 0 ? "#b3261e" : "inherit"}">${fmtNum(r.profit)}</b><br><small style="color:var(--muted)">${pnlPct(r.profit, r.sales)}</small></td>
+      <td>${badge}</td>
+    </tr>`;
+  }).join("");
+
+  main.innerHTML = `
+    <div class="panel">
+      <div class="toolbar">
+        <h2 style="margin:0">가맹점 월별 손익 <small>가맹점이 직접 입력한 매출·지출</small></h2>
+        <div class="right">월 ${monthPickerHtml(month)}
+          <button class="iconBtn" id="pnlXlsxBtn">엑셀 받기</button>
+          <a href="store-pnl.html" target="_blank" rel="noopener" class="iconBtn" style="text-decoration:none">입력 화면 열기</a>
+        </div>
+      </div>
+      <p style="color:var(--muted);font-size:12px;margin:0 0 12px">입력 매장 ${entered} / ${state.stores.length}곳 · 원가율은 식자재 ÷ 매출, 인건비율은 인건비 ÷ 매출입니다. (2025년 본점 평균 원가율 35%, 순수익율 13%)</p>
+      <div class="kpiGrid" style="margin-bottom:12px">
+        ${kpi("합계 매출", fmtNum(tSales) + "원")}
+        ${kpi("합계 지출", fmtNum(tExpense) + "원")}
+        ${kpi("합계 순수익", fmtNum(tProfit) + "원")}
+        ${kpi("평균 원가율", pnlPct(tCat["식자재"], tSales))}
+        ${kpi("평균 순수익율", pnlPct(tProfit, tSales))}
+      </div>
+      <div class="tableWrap"><table style="table-layout:fixed">
+        <colgroup><col style="width:120px"><col style="width:110px"><col style="width:110px"><col style="width:110px"><col style="width:100px"><col style="width:100px"><col style="width:100px"><col style="width:110px"><col style="width:120px"><col style="width:80px"></colgroup>
+        <thead><tr><th>매장</th><th>매출</th><th>식자재</th><th>인건비</th><th>고정비</th><th>공과금·운영비</th><th>세금·4대보험</th><th>지출 합계</th><th>순수익</th><th>상태</th></tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <div class="toolbar">
+        <h2 style="margin:0">매장별 12개월 추이</h2>
+        <div class="right"><select id="pnlTrendStore">${state.stores.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join("")}</select></div>
+      </div>
+      <div id="pnlTrend"><p style="color:var(--muted)">매장을 선택하면 최근 12개월 매출·순수익 추이를 보여줍니다.</p></div>
+    </div>
+  `;
+
+  bindMonthPicker(main, () => renderStorePnl(main));
+  $("#pnlXlsxBtn").addEventListener("click", () => exportStorePnlXlsx(month, headers || [], itemsByPnl));
+  $("#pnlTrendStore").addEventListener("change", (e) => renderPnlTrend(e.target.value));
+  if (state.stores.length) renderPnlTrend(state.stores[0].id);
+}
+
+async function renderPnlTrend(storeId) {
+  const box = $("#pnlTrend");
+  box.innerHTML = `<p style="color:var(--muted)">불러오는 중...</p>`;
+  const months = [];
+  const d = new Date(state.currentMonth + "-01T00:00:00");
+  for (let i = 11; i >= 0; i--) {
+    const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    months.push(`${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}`);
+  }
+  const { data: headers } = await sb.from("store_pnl").select("*").eq("store_id", storeId).in("month", months);
+  const ids = (headers || []).map(h => h.id);
+  let items = [];
+  if (ids.length) {
+    const { data } = await sb.from("store_pnl_items").select("pnl_id,category,amount").in("pnl_id", ids);
+    items = data || [];
+  }
+  const byPnl = {};
+  for (const it of items) (byPnl[it.pnl_id] = byPnl[it.pnl_id] || []).push(it);
+  const hByMonth = {};
+  for (const h of headers || []) hByMonth[h.month] = h;
+
+  const rows = months.map(m => {
+    const h = hByMonth[m];
+    if (!h) return `<tr><td>${m}</td><td colspan="5" style="color:var(--muted)">미입력</td></tr>`;
+    const r = pnlSummarize(h, byPnl[h.id] || []);
+    return `<tr><td>${m}</td><td>${fmtNum(r.sales)}</td><td>${fmtNum(r.expense)}</td>
+      <td><b style="color:${r.profit < 0 ? "#b3261e" : "inherit"}">${fmtNum(r.profit)}</b></td>
+      <td>${pnlPct(r.profit, r.sales)}</td><td>${pnlPct(r.byCat["식자재"], r.sales)}</td></tr>`;
+  }).join("");
+
+  box.innerHTML = `<div class="tableWrap"><table>
+    <thead><tr><th>월</th><th>매출</th><th>지출</th><th>순수익</th><th>순수익율</th><th>원가율</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function exportStorePnlXlsx(month, headers, itemsByPnl) {
+  const storeName = {};
+  for (const s of state.stores) storeName[s.id] = s.name;
+  const summary = [["매장", "매출", "고정비", "식자재", "공과금·운영비", "세금·4대보험", "인건비", "지출합계", "순수익", "순수익율", "원가율", "상태"]];
+  const detail = [["매장", "구분", "계정", "항목", "거래처 및 비고", "공급가", "세액", "합계금액"]];
+  for (const h of headers) {
+    const r = pnlSummarize(h, itemsByPnl[h.id] || []);
+    summary.push([storeName[h.store_id] || "", r.sales, r.byCat["고정비"], r.byCat["식자재"], r.byCat["공과금운영비"],
+      r.byCat["세금보험"], r.byCat["인건비"], r.expense, r.profit,
+      r.sales ? Number((r.profit / r.sales * 100).toFixed(1)) : 0,
+      r.sales ? Number((r.byCat["식자재"] / r.sales * 100).toFixed(1)) : 0, h.status]);
+    for (const it of (itemsByPnl[h.id] || [])) {
+      detail.push([storeName[h.store_id] || "", PNL_CAT_LABEL[it.category] || it.category, it.account || "", it.item || "",
+        it.vendor || "", Number(it.supply_amount) || 0, Number(it.tax_amount) || 0, Number(it.amount) || 0]);
+    }
+  }
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summary), "매장별요약");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detail), "상세내역");
+  XLSX.writeFile(wb, `가맹점손익_${month}.xlsx`);
 }
 
 // ---------- 시작 ----------
