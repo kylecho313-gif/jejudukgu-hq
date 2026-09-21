@@ -4,5 +4,5 @@
 const CONFIG = {
   SUPABASE_URL: "https://apjrpnlxxzufsamdjvkm.supabase.co",
   SUPABASE_ANON_KEY: "sb_publishable_t6XSdX4B1x8khUaGSturlg_GGR1BmV0",
-  APP_PASSWORD: "dukgu2026",
+  APP_PASSWORD: "0000",
 };
