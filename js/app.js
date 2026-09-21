@@ -128,6 +128,7 @@ function buildTabs() {
   });
 }
 async function goTab(id) {
+  if (id !== "accounts") lastCreatedAccount = null;
   $all("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === id));
   const tab = TABS.find(t => t.id === id);
   const main = $("#mainContent");
@@ -1317,6 +1318,32 @@ function exportStorePnlXlsx(month, headers, itemsByPnl) {
 // 관리자만 쓸 수 있는 DB 함수(admin_*)로 계정을 만들고 권한을 준다. Supabase 대시보드에 들어갈 필요 없음.
 const ROLE_LABEL = { admin: "관리자", reader: "조회 전용", store: "가맹점" };
 
+let lastCreatedAccount = null;
+
+function createdPanelHtml(c) {
+  const base = `${location.origin}${location.pathname.replace(/[^/]*$/, "")}`;
+  const url = c.role === "store" ? base + "store-pnl.html" : base;
+  const msg = c.role === "store"
+    ? `[제주덕구] ${c.storeName || ""} 월별 손익 입력 계정 안내\n접속 주소: ${url}\n아이디: ${c.email}\n비밀번호: ${c.password}\n로그인 후 매월 매출·지출을 입력하고 "본사에 제출"을 눌러주세요.`
+    : `[제주덕구] 본사 앱 계정 안내\n접속 주소: ${url}\n아이디: ${c.email}\n비밀번호: ${c.password}`;
+  return `<div class="panel" id="createdPanel" style="border:2px solid #2e7d32">
+    <h2 style="margin:0 0 8px;color:#2e7d32">✅ 계정을 만들었습니다</h2>
+    <table style="width:auto"><tbody>
+      <tr><td style="padding-right:16px">아이디</td><td><b>${escapeHtml(c.email)}</b></td></tr>
+      <tr><td>처음 비밀번호</td><td><b>${escapeHtml(c.password)}</b></td></tr>
+      <tr><td>이름</td><td>${escapeHtml(c.name || "-")}</td></tr>
+      <tr><td>권한</td><td>${ROLE_LABEL[c.role] || c.role}${c.role === "store" ? ` · <b>${escapeHtml(c.storeName || "")}</b>` : ""}</td></tr>
+      <tr><td>접속 주소</td><td>${escapeHtml(url)}</td></tr>
+    </tbody></table>
+    <textarea id="createdMsg" readonly style="width:100%;height:92px;margin-top:10px;font-size:13px">${escapeHtml(msg)}</textarea>
+    <div style="margin-top:8px">
+      <button class="primary" id="createdCopyBtn">전달 문구 복사</button>
+      <button class="iconBtn" id="createdOkBtn" style="margin-left:8px">확인</button>
+      <small style="color:var(--muted);margin-left:8px">복사해서 카톡·문자로 보내세요. "확인"을 누르면 이 칸은 닫히고 비밀번호는 다시 볼 수 없습니다.</small>
+    </div>
+  </div>`;
+}
+
 async function renderAccounts(main) {
   const { data: rows, error } = await sb.rpc("admin_list_accounts");
   if (error) {
@@ -1340,6 +1367,7 @@ async function renderAccounts(main) {
     </select>`;
 
   main.innerHTML = `
+    ${lastCreatedAccount ? createdPanelHtml(lastCreatedAccount) : ""}
     <div class="panel">
       <div class="toolbar">
         <h2 style="margin:0">계정 목록 <small>앱에 로그인할 수 있는 사람</small></h2>
@@ -1383,6 +1411,15 @@ async function renderAccounts(main) {
       </p>
     </div>
   `;
+
+  if (lastCreatedAccount) {
+    $("#createdCopyBtn").addEventListener("click", async () => {
+      const text = $("#createdMsg").value;
+      try { await navigator.clipboard.writeText(text); toast("전달 문구를 복사했습니다"); }
+      catch { $("#createdMsg").select(); document.execCommand("copy"); toast("전달 문구를 복사했습니다"); }
+    });
+    $("#createdOkBtn").addEventListener("click", () => { lastCreatedAccount = null; $("#createdPanel").remove(); });
+  }
 
   const body = $("#accBody");
   const saveAllBtn = $("#accSaveAllBtn");
@@ -1447,10 +1484,9 @@ async function renderAccounts(main) {
     const { error } = await sb.rpc("admin_create_account", { p_email: email, p_password: pw, p_name: name, p_role: role, p_store_id: storeId });
     e.currentTarget.disabled = false;
     if (error) { alert("만들기 실패: " + error.message); return; }
-    alert(role === "store"
-      ? `가맹점 계정을 만들었습니다.\n아이디: ${email}\n비밀번호: 방금 입력한 값\n접속 주소: ${location.origin}${location.pathname.replace(/[^/]*$/, "")}store-pnl.html\n점주님께 알려주세요.`
-      : `계정을 만들었습니다.\n아이디: ${email}\n비밀번호: 방금 입력한 값\n본인에게 알려주세요.`);
-    renderAccounts(main);
+    lastCreatedAccount = { email, password: pw, name, role, storeName: state.stores.find(x => x.id === storeId)?.name || "" };
+    await renderAccounts(main);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   });
 }
 
