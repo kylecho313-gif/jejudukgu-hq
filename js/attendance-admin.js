@@ -79,25 +79,35 @@ function computeSettlement(logs, hourlyWage, monthStr, giveAllowance = true) {
   const weekTotals = {};
   let monthHours = 0;
   const monthDays = new Set();
+  let holidayHours = 0;
+  const holidayDays = new Set();
   for (const l of logs) {
     if (!l.clock_out) continue;
     const hrs = (new Date(l.clock_out) - new Date(l.clock_in)) / 3600000;
     if (hrs <= 0) continue;
     const monday = isoWeekMonday(l.work_date);
     weekTotals[monday] = (weekTotals[monday] || 0) + hrs;
-    if (l.work_date.startsWith(monthStr)) { monthHours += hrs; monthDays.add(l.work_date); }
+    if (l.work_date.startsWith(monthStr)) {
+      monthHours += hrs; monthDays.add(l.work_date);
+      if (window.HOLIDAY_PAY && HOLIDAY_PAY.nameOf(l.work_date)) { holidayHours += hrs; holidayDays.add(l.work_date); }
+    }
   }
   let weeklyAllowance = 0;
   for (const [monday, hrs] of Object.entries(weekTotals)) {
     if (giveAllowance && monday.startsWith(monthStr) && hrs >= 15) weeklyAllowance += Math.min(hrs, 40) / 40 * 8 * hourlyWage;
   }
   const basePay = monthHours * hourlyWage;
+  // 공휴일 근무는 기본급(1배)에 더해 (배율-1)만큼 가산 → 합계로는 시급의 1.5배
+  const holidayPremium = window.HOLIDAY_PAY ? holidayHours * hourlyWage * (HOLIDAY_PAY.rate - 1) : 0;
   return {
     days: monthDays.size,
     hours: monthHours,
     basePay: Math.round(basePay),
+    holidayHours,
+    holidayDays: [...holidayDays].sort(),
+    holidayPremium: Math.round(holidayPremium),
     weeklyAllowance: Math.round(weeklyAllowance),
-    total: Math.round(basePay + weeklyAllowance),
+    total: Math.round(basePay + holidayPremium + weeklyAllowance),
   };
 }
 function staffRowHtml(s) {
@@ -165,18 +175,21 @@ async function renderApp(main) {
       }).join("");
     }).join("");
 
-  let settleRows = "", totalBase = 0, totalAllow = 0, totalPay = 0, totalHours = 0, totalWithhold = 0, totalNet = 0;
+  let settleRows = "", totalBase = 0, totalHoliday = 0, totalAllow = 0, totalPay = 0, totalHours = 0, totalWithhold = 0, totalNet = 0;
   for (const s of staffList) {
     const logs = rangeLogs.filter(l => l.staff_id === s.id);
     const r = computeSettlement(logs, Number(s.hourly_wage) || 0, monthStr, s.weekly_allowance !== false);
     const wh3 = s.withhold_3_3 !== false;
     const withholdAmt = wh3 ? Math.round(r.total * 0.033) : 0;
     const netPay = r.total - withholdAmt;
-    totalBase += r.basePay; totalAllow += r.weeklyAllowance; totalPay += r.total; totalHours += r.hours;
+    totalBase += r.basePay; totalHoliday += r.holidayPremium; totalAllow += r.weeklyAllowance; totalPay += r.total; totalHours += r.hours;
     totalWithhold += withholdAmt; totalNet += netPay;
-    settleRows += `<tr><td>${escapeHtml(s.name)}</td><td>${r.days}일</td><td>${r.hours.toFixed(1)}시간</td><td>${fmtNum(r.basePay)}원</td><td>${s.weekly_allowance === false ? "미지급" : fmtNum(r.weeklyAllowance) + "원"}</td><td>${fmtNum(r.total)}원</td><td>${wh3 ? "-" + fmtNum(withholdAmt) + "원" : "미적용"}</td><td><strong>${fmtNum(netPay)}원</strong></td></tr>`;
+    settleRows += `<tr><td>${escapeHtml(s.name)}</td><td>${r.days}일</td><td>${r.hours.toFixed(1)}시간</td><td>${fmtNum(r.basePay)}원</td><td>${r.holidayPremium ? `${fmtNum(r.holidayPremium)}원<br><small style="color:var(--muted)">${r.holidayHours.toFixed(1)}시간 · ${r.holidayDays.map(d => d.slice(5).replace("-", "/")).join(", ")}</small>` : "-"}</td><td>${s.weekly_allowance === false ? "미지급" : fmtNum(r.weeklyAllowance) + "원"}</td><td>${fmtNum(r.total)}원</td><td>${wh3 ? "-" + fmtNum(withholdAmt) + "원" : "미적용"}</td><td><strong>${fmtNum(netPay)}원</strong></td></tr>`;
   }
-  if (!staffList.length) settleRows = `<tr><td colspan="8" style="color:var(--muted)">등록된 알바가 없습니다.</td></tr>`;
+  if (!staffList.length) settleRows = `<tr><td colspan="9" style="color:var(--muted)">등록된 알바가 없습니다.</td></tr>`;
+  const monthHolidays = window.HOLIDAY_PAY
+    ? Object.keys(HOLIDAY_PAY.days).filter(d => d.startsWith(monthStr) && HOLIDAY_PAY.nameOf(d)).map(d => `${d.slice(5).replace("-", "/")} ${HOLIDAY_PAY.days[d]}`)
+    : [];
 
   main.innerHTML = `
     <div class="panel">
@@ -231,16 +244,18 @@ async function renderApp(main) {
       <h2 style="margin:0 0 4px">월별 정산 · ${monthStr}</h2>
       <p style="color:var(--muted);font-size:12px;margin:0 0 12px">
         기본급 = 시급 × 근무시간. 알바 명단에서 "주휴수당"을 끈 알바는 주휴수당 없이 기본급만 계산합니다.
+        공휴일 가산 = 공휴일(대체공휴일 포함, 일요일 제외)에 일한 시간 × 시급 × 0.5 — 기본급과 합쳐 시급의 1.5배가 되며, 모든 알바에게 2026년 10월 근무분부터 적용합니다.
+        이번 달 공휴일: <strong>${monthHolidays.length ? escapeHtml(monthHolidays.join(" · ")) : "없음"}</strong>.
         주휴수당(추정)은 해당 주(월~일요일) 실근무시간이 15시간 이상일 때
         (주 근무시간 ÷ 40시간, 최대 1) × 8 × 시급 으로 간이 계산한 값이며, 결근 여부는 반영하지 못합니다.
-        3.3% 공제는 (기본급+주휴수당) 합계에 사업소득 원천징수 3.3%를 적용한 금액이며, 알바 명단에서 알바별로 켜고 끌 수 있습니다.
+        3.3% 공제는 (기본급+공휴일 가산+주휴수당) 합계에 사업소득 원천징수 3.3%를 적용한 금액이며, 알바 명단에서 알바별로 켜고 끌 수 있습니다.
         정확한 지급액·세무 처리는 세무사·노무사 확인을 권장합니다. 퇴근 처리가 안 된 기록은 위 근태기록에서 퇴근시각을 채운 뒤 다시 계산됩니다.
       </p>
       <div class="tableWrap"><table>
-        <thead><tr><th>이름</th><th>근무일수</th><th>근무시간</th><th>기본급</th><th>주휴수당(추정)</th><th>합계</th><th>3.3% 공제액</th><th>실지급액</th></tr></thead>
+        <thead><tr><th>이름</th><th>근무일수</th><th>근무시간</th><th>기본급</th><th>공휴일 가산(0.5배)</th><th>주휴수당(추정)</th><th>합계</th><th>3.3% 공제액</th><th>실지급액</th></tr></thead>
         <tbody>${settleRows}</tbody>
         <tfoot><tr style="font-weight:700;background:#f5f0e8">
-          <td>합계</td><td></td><td>${totalHours.toFixed(1)}시간</td><td>${fmtNum(totalBase)}원</td><td>${fmtNum(totalAllow)}원</td><td>${fmtNum(totalPay)}원</td><td>-${fmtNum(totalWithhold)}원</td><td>${fmtNum(totalNet)}원</td>
+          <td>합계</td><td></td><td>${totalHours.toFixed(1)}시간</td><td>${fmtNum(totalBase)}원</td><td>${fmtNum(totalHoliday)}원</td><td>${fmtNum(totalAllow)}원</td><td>${fmtNum(totalPay)}원</td><td>-${fmtNum(totalWithhold)}원</td><td>${fmtNum(totalNet)}원</td>
         </tr></tfoot>
       </table></div>
     </div>
