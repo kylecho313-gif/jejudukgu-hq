@@ -7,6 +7,7 @@ const state = {
   storeId: null,
   userName: "",
   currentMonth: monthNow(),
+  logStaffId: "", // 근태기록 이름 필터 ("" = 전체)
 };
 
 // ---------- 유틸 ----------
@@ -125,7 +126,7 @@ function staffRowHtml(s) {
   </tr>`;
 }
 function logRowHtml(l, staffName) {
-  return `<tr data-id="${l.id}">
+  return `<tr data-id="${l.id}" data-staff="${l.staff_id}">
     <td>${escapeHtml(staffName)}</td>
     <td><input type="date" data-key="work_date" value="${l.work_date || ""}"></td>
     <td><input type="datetime-local" data-key="clock_in" value="${toDatetimeLocal(l.clock_in)}"></td>
@@ -162,6 +163,9 @@ async function renderApp(main) {
     todayLogs = t || []; rangeLogs = r || []; deletedLogs = d || [];
   }
   const monthLogs = rangeLogs.filter(l => l.work_date >= monthStart && l.work_date <= monthEnd);
+  // 이름 필터 목록: 재직중이거나 이번 달 기록이 있는 알바
+  const logFilterStaff = (staffList || []).filter(s => s.active || monthLogs.some(l => l.staff_id === s.id));
+  if (state.logStaffId && !logFilterStaff.some(s => s.id === state.logStaffId)) state.logStaffId = "";
 
   const todayRows = !staffList.length ? `<tr><td colspan="5" style="color:var(--muted)">등록된 알바가 없습니다.</td></tr>` :
     staffList.map(s => {
@@ -218,8 +222,11 @@ async function renderApp(main) {
     <div class="panel">
       <div class="toolbar">
         <h2 style="margin:0">근태기록 (수정 가능)</h2>
-        <div class="right"><button class="primary" id="logsSaveAllBtn" disabled>변경사항 모두 저장</button> 월 ${monthPickerHtml(monthStr)}</div>
+        <div class="right"><button class="primary" id="logsSaveAllBtn" disabled>변경사항 모두 저장</button>
+          이름 <select id="logStaffFilter"><option value="">전체</option>${logFilterStaff.map(s => `<option value="${s.id}" ${s.id === state.logStaffId ? "selected" : ""}>${escapeHtml(s.name)}${s.active ? "" : " (퇴사)"}</option>`).join("")}</select>
+          월 ${monthPickerHtml(monthStr)}</div>
       </div>
+      <p id="logsSummary" style="margin:0 0 8px;font-size:13px;display:none"></p>
       <div class="tableWrap"><table>
         <colgroup><col style="width:110px"><col style="width:130px"><col style="width:170px"><col style="width:170px"><col><col style="width:100px"></colgroup>
         <thead><tr><th>이름</th><th>근무일</th><th>출근시각</th><th>퇴근시각</th><th>메모</th><th>작업</th></tr></thead>
@@ -321,6 +328,34 @@ async function renderApp(main) {
   };
   $("#staffSaveAllBtn").addEventListener("click", () => saveAll("#staffBody", "명"));
   $("#logsSaveAllBtn").addEventListener("click", () => saveAll("#logsBody", "건"));
+
+  // ---- 근태기록 이름 필터 ----
+  // 줄을 지우지 않고 숨기기만 하므로, 다른 사람 줄에 저장 안 한 수정이 있어도 그대로 남고 "모두 저장"에 포함된다.
+  const applyLogFilter = () => {
+    const sid = state.logStaffId;
+    const body = $("#logsBody");
+    let shown = 0;
+    $all("tr[data-id]", body).forEach(tr => {
+      const show = !sid || tr.dataset.staff === sid;
+      tr.style.display = show ? "" : "none";
+      if (show) shown++;
+    });
+    let empty = $("#logsFilterEmpty");
+    if (sid && !shown) {
+      if (!empty) { empty = document.createElement("tr"); empty.id = "logsFilterEmpty"; empty.innerHTML = `<td colspan="6" style="color:var(--muted)">이번 달 이 알바의 기록이 없습니다.</td>`; body.appendChild(empty); }
+    } else if (empty) empty.remove();
+    const summary = $("#logsSummary");
+    const s = staffMap[sid];
+    if (!s) { summary.style.display = "none"; return; }
+    const r = computeSettlement(rangeLogs.filter(l => l.staff_id === sid), Number(s.hourly_wage) || 0, monthStr, s.weekly_allowance !== false);
+    const open = monthLogs.filter(l => l.staff_id === sid && !l.clock_out).length;
+    summary.innerHTML = `<strong>${escapeHtml(s.name)}</strong> · ${monthStr} · 근무 <strong>${r.days}일</strong> · <strong>${r.hours.toFixed(1)}시간</strong> · 기록 ${shown}건`
+      + (open ? ` · <span style="color:#b3261e">퇴근 미처리 ${open}건</span>` : "")
+      + ` <small style="color:var(--muted)">(저장된 기록 기준)</small>`;
+    summary.style.display = "";
+  };
+  $("#logStaffFilter").addEventListener("change", (e) => { state.logStaffId = e.target.value; applyLogFilter(); });
+  applyLogFilter();
 
   const monthEl = $("#monthPicker", main);
   monthEl.addEventListener("change", async () => {
